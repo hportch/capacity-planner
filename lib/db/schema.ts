@@ -1,34 +1,54 @@
 import type { Client } from '@libsql/client';
 
+async function getSchemaVersion(client: Client): Promise<number> {
+  try {
+    const result = await client.execute('SELECT version FROM _schema_version LIMIT 1');
+    return (result.rows[0] as Record<string, number>)?.version ?? 0;
+  } catch {
+    // Table doesn't exist yet — version 0
+    return 0;
+  }
+}
+
+async function setSchemaVersion(client: Client, version: number): Promise<void> {
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS _schema_version (version INTEGER NOT NULL)
+  `);
+  await client.execute('DELETE FROM _schema_version');
+  await client.execute({ sql: 'INSERT INTO _schema_version (version) VALUES (?)', args: [version] });
+}
+
 export async function initSchema(client: Client): Promise<void> {
-  const versionResult = await client.execute('PRAGMA user_version');
-  const version = (versionResult.rows[0] as Record<string, number>)?.user_version ?? 0;
+  const version = await getSchemaVersion(client);
 
   if (version < 1) {
-    await client.executeMultiple(`
+    await client.execute(`
       CREATE TABLE IF NOT EXISTS teams (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
         name          TEXT NOT NULL UNIQUE,
         display_order INTEGER NOT NULL DEFAULT 0,
         created_at    TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-
+      )
+    `);
+    await client.execute(`
       CREATE TABLE IF NOT EXISTS roles (
         id         INTEGER PRIMARY KEY AUTOINCREMENT,
         name       TEXT NOT NULL UNIQUE,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-
+      )
+    `);
+    await client.execute(`
       CREATE TABLE IF NOT EXISTS statuses (
         id                  INTEGER PRIMARY KEY AUTOINCREMENT,
         name                TEXT NOT NULL UNIQUE,
-        category            TEXT NOT NULL CHECK (category IN ('available', 'unavailable', 'partial')),
+        category            TEXT NOT NULL CHECK (category IN ('available', 'unavailable', 'partial', 'loaned')),
         availability_weight REAL NOT NULL DEFAULT 1.0,
         color               TEXT NOT NULL DEFAULT '#64748b',
         display_order       INTEGER NOT NULL DEFAULT 0,
         created_at          TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-
+      )
+    `);
+    await client.execute(`
       CREATE TABLE IF NOT EXISTS staff (
         id               INTEGER PRIMARY KEY AUTOINCREMENT,
         name             TEXT NOT NULL,
@@ -38,14 +58,15 @@ export async function initSchema(client: Client): Promise<void> {
         end_date         TEXT,
         contracted_hours REAL NOT NULL DEFAULT 37.5,
         is_active        INTEGER NOT NULL DEFAULT 1,
+        is_vacancy       INTEGER NOT NULL DEFAULT 0,
         notes            TEXT,
         created_at       TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_staff_team ON staff(team_id);
-      CREATE INDEX IF NOT EXISTS idx_staff_active ON staff(is_active);
-
+      )
+    `);
+    await client.execute('CREATE INDEX IF NOT EXISTS idx_staff_team ON staff(team_id)');
+    await client.execute('CREATE INDEX IF NOT EXISTS idx_staff_active ON staff(is_active)');
+    await client.execute(`
       CREATE TABLE IF NOT EXISTS daily_allocations (
         id         INTEGER PRIMARY KEY AUTOINCREMENT,
         staff_id   INTEGER NOT NULL REFERENCES staff(id),
@@ -55,11 +76,11 @@ export async function initSchema(client: Client): Promise<void> {
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now')),
         UNIQUE(staff_id, date)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_alloc_date ON daily_allocations(date);
-      CREATE INDEX IF NOT EXISTS idx_alloc_staff_date ON daily_allocations(staff_id, date);
-
+      )
+    `);
+    await client.execute('CREATE INDEX IF NOT EXISTS idx_alloc_date ON daily_allocations(date)');
+    await client.execute('CREATE INDEX IF NOT EXISTS idx_alloc_staff_date ON daily_allocations(staff_id, date)');
+    await client.execute(`
       CREATE TABLE IF NOT EXISTS capacity_thresholds (
         id                INTEGER PRIMARY KEY AUTOINCREMENT,
         team_id           INTEGER NOT NULL REFERENCES teams(id),
@@ -71,8 +92,9 @@ export async function initSchema(client: Client): Promise<void> {
         effective_to      TEXT,
         created_at        TEXT NOT NULL DEFAULT (datetime('now')),
         UNIQUE(team_id, effective_from)
-      );
-
+      )
+    `);
+    await client.execute(`
       CREATE TABLE IF NOT EXISTS ticket_metrics (
         id                INTEGER PRIMARY KEY AUTOINCREMENT,
         year              INTEGER NOT NULL,
@@ -84,38 +106,8 @@ export async function initSchema(client: Client): Promise<void> {
         notes             TEXT,
         created_at        TEXT NOT NULL DEFAULT (datetime('now')),
         UNIQUE(year, month)
-      );
-
-      PRAGMA user_version = 1;
+      )
     `);
-  }
-
-  if (version < 2) {
-    await client.executeMultiple(`
-      PRAGMA foreign_keys = OFF;
-
-      CREATE TABLE IF NOT EXISTS statuses_new (
-        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-        name                TEXT NOT NULL UNIQUE,
-        category            TEXT NOT NULL CHECK (category IN ('available', 'unavailable', 'partial', 'loaned')),
-        availability_weight REAL NOT NULL DEFAULT 1.0,
-        color               TEXT NOT NULL DEFAULT '#64748b',
-        display_order       INTEGER NOT NULL DEFAULT 0,
-        created_at          TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-      INSERT OR IGNORE INTO statuses_new SELECT * FROM statuses;
-      DROP TABLE statuses;
-      ALTER TABLE statuses_new RENAME TO statuses;
-
-      PRAGMA foreign_keys = ON;
-      PRAGMA user_version = 2;
-    `);
-  }
-
-  if (version < 3) {
-    await client.executeMultiple(`
-      ALTER TABLE staff ADD COLUMN is_vacancy INTEGER NOT NULL DEFAULT 0;
-      PRAGMA user_version = 3;
-    `);
+    await setSchemaVersion(client, 3);
   }
 }
