@@ -12,6 +12,7 @@ export async function GET(request: NextRequest) {
   const granularity = searchParams.get('granularity') as
     | 'monthly'
     | 'quarterly'
+    | 'annual'
     | null;
   const teamIdParam = searchParams.get('team_id');
 

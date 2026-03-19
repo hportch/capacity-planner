@@ -88,4 +88,31 @@ export function initSchema(db: Database.Database): void {
 
     db.pragma('user_version = 1');
   }
+
+  if (version < 2) {
+    // Add 'loaned' to the statuses category CHECK constraint
+    db.pragma('foreign_keys = OFF');
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS statuses_new (
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+        name                TEXT NOT NULL UNIQUE,
+        category            TEXT NOT NULL CHECK (category IN ('available', 'unavailable', 'partial', 'loaned')),
+        availability_weight REAL NOT NULL DEFAULT 1.0,
+        color               TEXT NOT NULL DEFAULT '#64748b',
+        display_order       INTEGER NOT NULL DEFAULT 0,
+        created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT OR IGNORE INTO statuses_new SELECT * FROM statuses;
+      DROP TABLE statuses;
+      ALTER TABLE statuses_new RENAME TO statuses;
+    `);
+    db.pragma('foreign_keys = ON');
+    db.pragma('user_version = 2');
+  }
+
+  if (version < 3) {
+    // Add is_vacancy column to staff for tracking unfilled positions
+    db.exec(`ALTER TABLE staff ADD COLUMN is_vacancy INTEGER NOT NULL DEFAULT 0`);
+    db.pragma('user_version = 3');
+  }
 }

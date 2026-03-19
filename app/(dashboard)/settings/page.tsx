@@ -2,11 +2,15 @@
 
 import { useState, useEffect } from 'react'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Badge } from '@/components/ui/badge'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+} from '@/components/ui/select'
 import {
   Table,
   TableBody,
@@ -44,12 +48,21 @@ interface TeamRow {
   display_order: number
 }
 
+const CATEGORIES = [
+  { value: 'available', label: 'Available', weight: 1.0 },
+  { value: 'partial', label: 'Partial', weight: 0.5 },
+  { value: 'unavailable', label: 'Unavailable', weight: 0.0 },
+  { value: 'loaned', label: 'Loaned', weight: 0.0 },
+]
+
 export default function SettingsPage() {
   const [thresholds, setThresholds] = useState<ThresholdRow[]>([])
   const [statuses, setStatuses] = useState<StatusRow[]>([])
   const [teams, setTeams] = useState<TeamRow[]>([])
-  const [saving, setSaving] = useState(false)
-  const [saveMessage, setSaveMessage] = useState('')
+  const [savingThresholds, setSavingThresholds] = useState(false)
+  const [savingStatuses, setSavingStatuses] = useState(false)
+  const [thresholdMessage, setThresholdMessage] = useState('')
+  const [statusMessage, setStatusMessage] = useState('')
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -61,17 +74,11 @@ export default function SettingsPage() {
           fetch('/api/teams'),
         ])
 
-        if (thresholdsRes.ok) {
-          setThresholds(await thresholdsRes.json())
-        }
-        if (statusesRes.ok) {
-          setStatuses(await statusesRes.json())
-        }
-        if (teamsRes.ok) {
-          setTeams(await teamsRes.json())
-        }
+        if (thresholdsRes.ok) setThresholds(await thresholdsRes.json())
+        if (statusesRes.ok) setStatuses(await statusesRes.json())
+        if (teamsRes.ok) setTeams(await teamsRes.json())
       } catch {
-        // silently handle - data will just be empty
+        // silently handle
       } finally {
         setLoading(false)
       }
@@ -79,22 +86,25 @@ export default function SettingsPage() {
     loadData()
   }, [])
 
+  // --- Threshold helpers ---
   function updateThreshold(id: number, field: string, value: string) {
     setThresholds((prev) =>
       prev.map((t) => {
         if (t.id !== id) return t
-        const numValue = parseFloat(value)
         if (field === 'min_headcount') {
           return { ...t, [field]: value === '' ? null : parseInt(value, 10) }
         }
-        return { ...t, [field]: isNaN(numValue) ? t[field as keyof ThresholdRow] : numValue }
+        // Percentage fields: convert from % display to decimal
+        const numValue = parseFloat(value)
+        if (isNaN(numValue)) return t
+        return { ...t, [field]: numValue / 100 }
       })
     )
   }
 
   async function saveThresholds() {
-    setSaving(true)
-    setSaveMessage('')
+    setSavingThresholds(true)
+    setThresholdMessage('')
     try {
       const results = await Promise.all(
         thresholds.map((t) =>
@@ -112,12 +122,58 @@ export default function SettingsPage() {
         )
       )
       const allOk = results.every((r) => r.ok)
-      setSaveMessage(allOk ? 'Thresholds saved successfully.' : 'Some thresholds failed to save.')
+      setThresholdMessage(allOk ? 'Saved.' : 'Some failed to save.')
     } catch {
-      setSaveMessage('Failed to save thresholds.')
+      setThresholdMessage('Failed to save.')
     } finally {
-      setSaving(false)
-      setTimeout(() => setSaveMessage(''), 3000)
+      setSavingThresholds(false)
+      setTimeout(() => setThresholdMessage(''), 3000)
+    }
+  }
+
+  // --- Status helpers ---
+  function updateStatus(id: number, field: string, value: string | number) {
+    setStatuses((prev) =>
+      prev.map((s) => {
+        if (s.id !== id) return s
+        if (field === 'category') {
+          const cat = CATEGORIES.find((c) => c.value === value)
+          return { ...s, category: String(value), availability_weight: cat?.weight ?? s.availability_weight }
+        }
+        if (field === 'availability_weight') {
+          return { ...s, [field]: typeof value === 'number' ? value : parseFloat(value) || 0 }
+        }
+        return { ...s, [field]: value }
+      })
+    )
+  }
+
+  async function saveStatuses() {
+    setSavingStatuses(true)
+    setStatusMessage('')
+    try {
+      const results = await Promise.all(
+        statuses.map((s) =>
+          fetch('/api/statuses', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: s.id,
+              name: s.name,
+              category: s.category,
+              availability_weight: s.availability_weight,
+              color: s.color,
+            }),
+          })
+        )
+      )
+      const allOk = results.every((r) => r.ok)
+      setStatusMessage(allOk ? 'Saved.' : 'Some failed to save.')
+    } catch {
+      setStatusMessage('Failed to save.')
+    } finally {
+      setSavingStatuses(false)
+      setTimeout(() => setStatusMessage(''), 3000)
     }
   }
 
@@ -146,11 +202,11 @@ export default function SettingsPage() {
               <CardTitle className="flex items-center justify-between">
                 <span>Capacity Thresholds</span>
                 <div className="flex items-center gap-2">
-                  {saveMessage && (
-                    <span className="text-xs text-muted-foreground">{saveMessage}</span>
+                  {thresholdMessage && (
+                    <span className="text-xs text-muted-foreground">{thresholdMessage}</span>
                   )}
-                  <Button size="sm" onClick={saveThresholds} disabled={saving} className="bg-teal-600 hover:bg-teal-700 text-white">
-                    {saving ? (
+                  <Button size="sm" onClick={saveThresholds} disabled={savingThresholds} className="bg-teal-600 hover:bg-teal-700 text-white">
+                    {savingThresholds ? (
                       <Loader2 className="size-3.5 animate-spin mr-1" />
                     ) : (
                       <Save className="size-3.5 mr-1" />
@@ -159,6 +215,9 @@ export default function SettingsPage() {
                   </Button>
                 </div>
               </CardTitle>
+              <CardDescription>
+                Set the minimum, ideal, and maximum utilisation thresholds per team. Values are percentages.
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <Table>
@@ -166,66 +225,68 @@ export default function SettingsPage() {
                   <TableRow>
                     <TableHead className="text-xs">Team</TableHead>
                     <TableHead className="text-xs">Min Headcount</TableHead>
-                    <TableHead className="text-xs">Min Utilisation</TableHead>
-                    <TableHead className="text-xs">Ideal Utilisation</TableHead>
-                    <TableHead className="text-xs">Max Utilisation</TableHead>
-                    <TableHead className="text-xs">Effective From</TableHead>
+                    <TableHead className="text-xs">Min %</TableHead>
+                    <TableHead className="text-xs">Ideal %</TableHead>
+                    <TableHead className="text-xs">Max %</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {thresholds.map((t) => (
                     <TableRow key={t.id}>
                       <TableCell className="text-sm font-medium">{t.team_name}</TableCell>
-                      <TableCell className="font-mono tabular-nums">
+                      <TableCell>
                         <Input
                           type="number"
                           value={t.min_headcount ?? ''}
                           onChange={(e) => updateThreshold(t.id, 'min_headcount', e.target.value)}
-                          className="w-20 h-7 text-xs font-mono tabular-nums focus-visible:ring-teal-500"
+                          className="w-16 h-7 text-xs font-mono tabular-nums"
                           min={0}
                         />
                       </TableCell>
-                      <TableCell className="font-mono tabular-nums">
-                        <Input
-                          type="number"
-                          value={t.min_utilisation}
-                          onChange={(e) => updateThreshold(t.id, 'min_utilisation', e.target.value)}
-                          className="w-20 h-7 text-xs font-mono tabular-nums focus-visible:ring-teal-500"
-                          step={0.05}
-                          min={0}
-                          max={2}
-                        />
+                      <TableCell>
+                        <div className="flex items-center gap-1">
+                          <Input
+                            type="number"
+                            value={Math.round(t.min_utilisation * 100)}
+                            onChange={(e) => updateThreshold(t.id, 'min_utilisation', e.target.value)}
+                            className="w-16 h-7 text-xs font-mono tabular-nums"
+                            min={0}
+                            max={200}
+                          />
+                          <span className="text-xs text-muted-foreground">%</span>
+                        </div>
                       </TableCell>
-                      <TableCell className="font-mono tabular-nums">
-                        <Input
-                          type="number"
-                          value={t.ideal_utilisation}
-                          onChange={(e) => updateThreshold(t.id, 'ideal_utilisation', e.target.value)}
-                          className="w-20 h-7 text-xs font-mono tabular-nums focus-visible:ring-teal-500"
-                          step={0.05}
-                          min={0}
-                          max={2}
-                        />
+                      <TableCell>
+                        <div className="flex items-center gap-1">
+                          <Input
+                            type="number"
+                            value={Math.round(t.ideal_utilisation * 100)}
+                            onChange={(e) => updateThreshold(t.id, 'ideal_utilisation', e.target.value)}
+                            className="w-16 h-7 text-xs font-mono tabular-nums"
+                            min={0}
+                            max={200}
+                          />
+                          <span className="text-xs text-muted-foreground">%</span>
+                        </div>
                       </TableCell>
-                      <TableCell className="font-mono tabular-nums">
-                        <Input
-                          type="number"
-                          value={t.max_utilisation}
-                          onChange={(e) => updateThreshold(t.id, 'max_utilisation', e.target.value)}
-                          className="w-20 h-7 text-xs font-mono tabular-nums focus-visible:ring-teal-500"
-                          step={0.05}
-                          min={0}
-                          max={2}
-                        />
-                      </TableCell>
-                      <TableCell className="text-xs font-mono text-muted-foreground">
-                        {t.effective_from}
+                      <TableCell>
+                        <div className="flex items-center gap-1">
+                          <Input
+                            type="number"
+                            value={Math.round(t.max_utilisation * 100)}
+                            onChange={(e) => updateThreshold(t.id, 'max_utilisation', e.target.value)}
+                            className="w-16 h-7 text-xs font-mono tabular-nums"
+                            min={0}
+                            max={200}
+                          />
+                          <span className="text-xs text-muted-foreground">%</span>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
                   {thresholds.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center text-muted-foreground text-sm py-8">
+                      <TableCell colSpan={5} className="text-center text-muted-foreground text-sm py-8">
                         No thresholds configured.
                       </TableCell>
                     </TableRow>
@@ -240,7 +301,25 @@ export default function SettingsPage() {
         <TabsContent value="statuses">
           <Card>
             <CardHeader>
-              <CardTitle>Status Definitions</CardTitle>
+              <CardTitle className="flex items-center justify-between">
+                <span>Status Definitions</span>
+                <div className="flex items-center gap-2">
+                  {statusMessage && (
+                    <span className="text-xs text-muted-foreground">{statusMessage}</span>
+                  )}
+                  <Button size="sm" onClick={saveStatuses} disabled={savingStatuses} className="bg-teal-600 hover:bg-teal-700 text-white">
+                    {savingStatuses ? (
+                      <Loader2 className="size-3.5 animate-spin mr-1" />
+                    ) : (
+                      <Save className="size-3.5 mr-1" />
+                    )}
+                    Save
+                  </Button>
+                </div>
+              </CardTitle>
+              <CardDescription>
+                Edit status names, categories, and colors. Category determines the utilisation weight.
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <Table>
@@ -255,31 +334,52 @@ export default function SettingsPage() {
                 <TableBody>
                   {statuses.map((s) => (
                     <TableRow key={s.id}>
-                      <TableCell className="text-sm font-medium">{s.name}</TableCell>
                       <TableCell>
-                        <Badge
-                          variant={
-                            s.category === 'available'
-                              ? 'default'
-                              : s.category === 'unavailable'
-                                ? 'destructive'
-                                : 'secondary'
-                          }
-                          className="text-[10px]"
+                        <Input
+                          value={s.name}
+                          onChange={(e) => updateStatus(s.id, 'name', e.target.value)}
+                          className="h-7 text-xs font-medium w-36"
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Select
+                          value={s.category}
+                          onValueChange={(val) => updateStatus(s.id, 'category', val ?? s.category)}
                         >
-                          {s.category}
-                        </Badge>
+                          <SelectTrigger size="sm" className="w-28 h-7 text-xs">
+                            <span data-slot="select-value" className="flex flex-1 text-left text-xs">
+                              {CATEGORIES.find((c) => c.value === s.category)?.label ?? s.category}
+                            </span>
+                          </SelectTrigger>
+                          <SelectContent>
+                            {CATEGORIES.map((c) => (
+                              <SelectItem key={c.value} value={c.value}>
+                                {c.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </TableCell>
                       <TableCell className="text-xs font-mono tabular-nums">
-                        {s.availability_weight}
+                        <Input
+                          type="number"
+                          value={s.availability_weight}
+                          onChange={(e) => updateStatus(s.id, 'availability_weight', e.target.value)}
+                          className="w-16 h-7 text-xs font-mono tabular-nums"
+                          step={0.1}
+                          min={0}
+                          max={1}
+                        />
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          <div
-                            className="size-4 rounded-sm border border-border"
-                            style={{ backgroundColor: s.color }}
+                          <input
+                            type="color"
+                            value={s.color}
+                            onChange={(e) => updateStatus(s.id, 'color', e.target.value)}
+                            className="size-7 cursor-pointer rounded border border-border bg-transparent p-0.5"
                           />
-                          <span className="text-xs font-mono text-muted-foreground">{s.color}</span>
+                          <span className="text-[10px] font-mono text-muted-foreground">{s.color}</span>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -302,22 +402,25 @@ export default function SettingsPage() {
           <Card>
             <CardHeader>
               <CardTitle>Teams</CardTitle>
+              <CardDescription>
+                Team configuration. Contact admin to add or remove teams.
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="text-xs">ID</TableHead>
                     <TableHead className="text-xs">Name</TableHead>
                     <TableHead className="text-xs">Display Order</TableHead>
+                    <TableHead className="text-xs">Staff Count</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {teams.map((t) => (
                     <TableRow key={t.id}>
-                      <TableCell className="text-xs font-mono text-muted-foreground">{t.id}</TableCell>
                       <TableCell className="text-sm font-medium">{t.name}</TableCell>
                       <TableCell className="text-xs font-mono tabular-nums">{t.display_order}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">&mdash;</TableCell>
                     </TableRow>
                   ))}
                   {teams.length === 0 && (

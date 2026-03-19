@@ -3,10 +3,24 @@ import { cn } from '@/lib/utils';
 
 interface StaffStatusBadgeProps {
   isActive: number;
+  isVacancy?: number;
   className?: string;
 }
 
-export function StaffStatusBadge({ isActive, className }: StaffStatusBadgeProps) {
+export function StaffStatusBadge({ isActive, isVacancy, className }: StaffStatusBadgeProps) {
+  if (isVacancy) {
+    return (
+      <Badge
+        className={cn(
+          'bg-violet-500/15 text-violet-600 dark:bg-violet-500/20 dark:text-violet-400',
+          className
+        )}
+      >
+        Vacancy
+      </Badge>
+    );
+  }
+
   return (
     <Badge
       className={cn(

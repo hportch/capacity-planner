@@ -193,4 +193,13 @@ export function seedData(db: Database.Database): void {
   });
 
   tx();
+
+  // Migration: add loaned statuses if missing (for existing databases)
+  const loanedCount = (db.prepare("SELECT COUNT(*) as c FROM statuses WHERE category = 'loaned'").get() as { c: number }).c;
+  if (loanedCount === 0) {
+    const insertStatus = db.prepare(
+      'INSERT INTO statuses (name, category, availability_weight, color, display_order) VALUES (?, ?, ?, ?, ?)'
+    );
+    insertStatus.run('Loaned', 'loaned', 0.0, '#f472b6', 60);
+  }
 }

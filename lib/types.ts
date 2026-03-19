@@ -12,7 +12,7 @@ export interface Role {
 export interface Status {
   id: number;
   name: string;
-  category: 'available' | 'unavailable' | 'partial';
+  category: 'available' | 'unavailable' | 'partial' | 'loaned';
   availability_weight: number;
   color: string;
   display_order: number;
@@ -27,6 +27,7 @@ export interface Staff {
   end_date: string | null;
   contracted_hours: number;
   is_active: number;
+  is_vacancy: number;
   notes: string | null;
   created_at: string;
   updated_at: string;

@@ -28,11 +28,12 @@ export function getDailyUtilisation(
 
   const teamName = team?.name ?? 'Unknown';
 
-  // Find all active staff members for this team on this date
+  // Find all active staff members for this team on this date (exclude vacancies)
   const activeStaff = db
     .prepare(
       `SELECT id FROM staff
        WHERE team_id = ?
+         AND is_vacancy = 0
          AND start_date <= ?
          AND (end_date IS NULL OR end_date >= ?)`
     )
@@ -203,6 +204,60 @@ export function getQuarterlyUtilisation(
 }
 
 /**
+ * Calculate annual utilisation for a team.
+ *
+ * annual_util = AVG(monthly values with headcount > 0)
+ */
+export function getAnnualUtilisation(
+  db: Database.Database,
+  teamId: number,
+  year: number
+): UtilisationResult {
+  const team = db
+    .prepare('SELECT id, name FROM teams WHERE id = ?')
+    .get(teamId) as Team | undefined;
+
+  const teamName = team?.name ?? 'Unknown';
+
+  const monthlyResults: UtilisationResult[] = [];
+  for (let month = 1; month <= 12; month++) {
+    monthlyResults.push(getMonthlyUtilisation(db, teamId, year, month));
+  }
+
+  const validMonths = monthlyResults.filter((r) => r.headcount > 0);
+
+  if (validMonths.length === 0) {
+    return {
+      team_id: teamId,
+      team_name: teamName,
+      period: String(year),
+      value: 0,
+      headcount: 0,
+      available_count: 0,
+    };
+  }
+
+  const avgValue =
+    validMonths.reduce((sum, r) => sum + r.value, 0) / validMonths.length;
+  const avgHeadcount = Math.round(
+    validMonths.reduce((sum, r) => sum + r.headcount, 0) / validMonths.length
+  );
+  const avgAvailable = Math.round(
+    validMonths.reduce((sum, r) => sum + r.available_count, 0) /
+      validMonths.length
+  );
+
+  return {
+    team_id: teamId,
+    team_name: teamName,
+    period: String(year),
+    value: Math.round(avgValue * 1000) / 1000,
+    headcount: avgHeadcount,
+    available_count: avgAvailable,
+  };
+}
+
+/**
  * Get utilisation for all teams across a period.
  *
  * Returns an array of UtilisationResult objects — one per team per period.
@@ -210,7 +265,7 @@ export function getQuarterlyUtilisation(
 export function getAllTeamsUtilisation(
   db: Database.Database,
   year: number,
-  granularity: 'monthly' | 'quarterly'
+  granularity: 'monthly' | 'quarterly' | 'annual'
 ): UtilisationResult[] {
   const teams = db
     .prepare('SELECT id, name, display_order FROM teams ORDER BY display_order')
@@ -224,11 +279,15 @@ export function getAllTeamsUtilisation(
         results.push(getMonthlyUtilisation(db, team.id, year, month));
       }
     }
-  } else {
+  } else if (granularity === 'quarterly') {
     for (let quarter = 1; quarter <= 4; quarter++) {
       for (const team of teams) {
         results.push(getQuarterlyUtilisation(db, team.id, year, quarter));
       }
+    }
+  } else {
+    for (const team of teams) {
+      results.push(getAnnualUtilisation(db, team.id, year));
     }
   }
 

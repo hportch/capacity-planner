@@ -52,12 +52,16 @@ export const STATUS_COLORS: Record<string, string> = {
   'Admin': '#64748b',
   'Induction': '#64748b',
   'Left': '#6b7280',
+
+  // Loaned
+  'Loaned': '#f472b6',
 };
 
 export const CATEGORY_COLORS = {
   available: '#22c55e',
   unavailable: '#ef4444',
   partial: '#f59e0b',
+  loaned: '#f472b6',
 } as const;
 
 export const UTILISATION_THRESHOLDS = {

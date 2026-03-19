@@ -40,7 +40,7 @@ export async function PUT(
   const fields: string[] = [];
   const values: (string | number | null)[] = [];
 
-  const allowedFields = ['name', 'team_id', 'role_id', 'start_date', 'end_date', 'contracted_hours', 'is_active', 'notes'];
+  const allowedFields = ['name', 'team_id', 'role_id', 'start_date', 'end_date', 'contracted_hours', 'is_active', 'is_vacancy', 'notes'];
   for (const field of allowedFields) {
     if (field in body) {
       fields.push(`${field} = ?`);

@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
   const db = getDb();
   const body = await request.json();
 
-  const { name, team_id, role_id, start_date, contracted_hours, notes } = body;
+  const { name, team_id, role_id, start_date, contracted_hours, is_vacancy, notes } = body;
 
   if (!name || !team_id || !role_id || !start_date) {
     return NextResponse.json(
@@ -50,14 +50,15 @@ export async function POST(request: NextRequest) {
   }
 
   const result = db.prepare(`
-    INSERT INTO staff (name, team_id, role_id, start_date, contracted_hours, notes)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO staff (name, team_id, role_id, start_date, contracted_hours, is_vacancy, notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(
     name,
     Number(team_id),
     Number(role_id),
     start_date,
     contracted_hours ?? 37.5,
+    is_vacancy ? 1 : 0,
     notes ?? null
   );
 

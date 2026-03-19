@@ -4,6 +4,7 @@ import type {
   StaffWithDetails,
   DailyAllocationWithDetails,
   Team,
+  CapacityThreshold,
 } from '@/lib/types';
 import { AllocationGrid } from '@/components/allocations/allocation-grid';
 import { DateRangePicker } from '@/components/allocations/date-range-picker';
@@ -67,7 +68,7 @@ export default async function AllocationsPage({
     FROM staff s
     JOIN teams t ON s.team_id = t.id
     JOIN roles r ON s.role_id = r.id
-    WHERE s.is_active = 1
+    WHERE s.is_active = 1 AND s.is_vacancy = 0
   `;
   const staffParams: (string | number)[] = [];
 
@@ -111,6 +112,21 @@ export default async function AllocationsPage({
     .prepare(allocQuery)
     .all(...allocParams) as DailyAllocationWithDetails[];
 
+  // Fetch thresholds for live utilisation indicators
+  const today = new Date().toISOString().split('T')[0];
+  const thresholds = db
+    .prepare(
+      `SELECT ct.team_id, ct.min_utilisation
+       FROM capacity_thresholds ct
+       WHERE ct.effective_to IS NULL OR ct.effective_to >= ?`
+    )
+    .all(today) as Pick<CapacityThreshold, 'team_id' | 'min_utilisation'>[];
+
+  const thresholdMap: Record<number, number> = {};
+  for (const t of thresholds) {
+    thresholdMap[t.team_id] = t.min_utilisation;
+  }
+
   return (
     <div className="flex flex-col gap-4 p-6">
       {/* Page header */}
@@ -131,6 +147,7 @@ export default async function AllocationsPage({
         teams={teams}
         initialAllocations={allocations}
         dateRange={{ from, to }}
+        thresholds={thresholdMap}
       />
     </div>
   );

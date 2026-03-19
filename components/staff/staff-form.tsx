@@ -18,7 +18,6 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import type { Team, Role, StaffWithDetails } from '@/lib/types';
@@ -41,6 +40,7 @@ export function StaffForm({ mode, staff }: StaffFormProps) {
   const [startDate, setStartDate] = useState(staff?.start_date ?? '');
   const [endDate, setEndDate] = useState(staff?.end_date ?? '');
   const [isActive, setIsActive] = useState(staff?.is_active !== 0);
+  const [isVacancy, setIsVacancy] = useState(staff?.is_vacancy === 1);
   const [contractedHours, setContractedHours] = useState<string>(
     staff?.contracted_hours?.toString() ?? '37.5'
   );
@@ -78,6 +78,7 @@ export function StaffForm({ mode, staff }: StaffFormProps) {
         start_date: startDate,
         end_date: !isActive && endDate ? endDate : null,
         is_active: isActive ? 1 : 0,
+        is_vacancy: isVacancy ? 1 : 0,
         contracted_hours: Number(contractedHours) || 37.5,
         notes: notes.trim() || null,
       };
@@ -139,9 +140,9 @@ export function StaffForm({ mode, staff }: StaffFormProps) {
               <Label>Team *</Label>
               <Select value={teamId} onValueChange={(val) => setTeamId(val ?? '')}>
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select team">
-                    {selectedTeam?.name ?? 'Select team'}
-                  </SelectValue>
+                    <span data-slot="select-value" className="flex flex-1 text-left">
+                    {selectedTeam?.name ?? staff?.team_name ?? 'Select team'}
+                  </span>
                 </SelectTrigger>
                 <SelectContent>
                   {teams.map((team) => (
@@ -157,9 +158,9 @@ export function StaffForm({ mode, staff }: StaffFormProps) {
               <Label>Role *</Label>
               <Select value={roleId} onValueChange={(val) => setRoleId(val ?? '')}>
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select role">
-                    {selectedRole?.name ?? 'Select role'}
-                  </SelectValue>
+                    <span data-slot="select-value" className="flex flex-1 text-left">
+                    {selectedRole?.name ?? staff?.role_name ?? 'Select role'}
+                  </span>
                 </SelectTrigger>
                 <SelectContent>
                   {roles.map((role) => (
@@ -194,6 +195,22 @@ export function StaffForm({ mode, staff }: StaffFormProps) {
                 max="60"
                 value={contractedHours}
                 onChange={(e) => setContractedHours(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="rounded-lg border p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <Label htmlFor="is_vacancy" className="text-sm font-medium">Vacancy placeholder</Label>
+                <p className="text-xs text-muted-foreground">
+                  Mark as a vacancy to track an unfilled position in the team.
+                </p>
+              </div>
+              <Switch
+                id="is_vacancy"
+                checked={isVacancy}
+                onCheckedChange={setIsVacancy}
               />
             </div>
           </div>
