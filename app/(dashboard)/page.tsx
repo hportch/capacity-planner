@@ -142,40 +142,41 @@ export default async function DashboardPage() {
     [today]
   )
 
-  // Compute utilisation per team for current and previous month
-  const teamCards = await Promise.all(
-    teams.map(async (team) => {
-      const current = await getMonthlyUtilisation(team.id, currentYear, currentMonth)
-      const previous = await getMonthlyUtilisation(team.id, previousMonthYear, previousMonth)
-      return {
-        teamName: team.name,
-        currentUtil: current.value,
-        previousUtil: previous.value,
-        headcount: current.headcount,
-        available: current.available_count,
-      }
-    })
-  )
-
-  // Get monthly heatmap data for full year
-  const monthlyData = await getAllTeamsUtilisation(currentYear, 'monthly')
-
-  // Get quarterly data
-  const quarterlyData = await getAllTeamsUtilisation(currentYear, 'quarterly')
-
-  // Get ticket metrics for current month
-  const ticketMetric = await dbGet<TicketMetric>(
-    'SELECT * FROM ticket_metrics WHERE year = ? AND month = ?',
-    [currentYear, currentMonth]
-  )
+  // Run ALL major data fetches in parallel
+  const [teamCards, monthlyData, quarterlyData, ticketMetric, alerts] = await Promise.all([
+    // Team utilisation cards (current + previous month per team)
+    Promise.all(
+      teams.map(async (team) => {
+        const [current, previous] = await Promise.all([
+          getMonthlyUtilisation(team.id, currentYear, currentMonth),
+          getMonthlyUtilisation(team.id, previousMonthYear, previousMonth),
+        ])
+        return {
+          teamName: team.name,
+          currentUtil: current.value,
+          previousUtil: previous.value,
+          headcount: current.headcount,
+          available: current.available_count,
+        }
+      })
+    ),
+    // Monthly heatmap data for full year
+    getAllTeamsUtilisation(currentYear, 'monthly'),
+    // Quarterly data
+    getAllTeamsUtilisation(currentYear, 'quarterly'),
+    // Ticket metrics for current month
+    dbGet<TicketMetric>(
+      'SELECT * FROM ticket_metrics WHERE year = ? AND month = ?',
+      [currentYear, currentMonth]
+    ),
+    // Alerts
+    computeAlerts(teams, thresholds, today, currentYear, currentMonth),
+  ])
 
   const ticketOpened = ticketMetric?.tickets_opened ?? 0
   const ticketClosed = ticketMetric?.tickets_closed ?? 0
   const ticketDeficit = ticketOpened - ticketClosed
   const ticketBaseline = ticketMetric?.capacity_baseline ?? 0
-
-  // Compute alerts
-  const alerts = await computeAlerts(teams, thresholds, today, currentYear, currentMonth)
 
   return (
     <div className="space-y-8">

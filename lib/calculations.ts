@@ -213,31 +213,32 @@ export async function getAnnualUtilisation(
 
 /**
  * Get utilisation for all teams across a period.
+ * Runs all team calculations in parallel for speed.
  */
 export async function getAllTeamsUtilisation(
   year: number,
   granularity: 'monthly' | 'quarterly' | 'annual'
 ): Promise<UtilisationResult[]> {
   const teams = await dbAll<Team>('SELECT id, name, display_order FROM teams ORDER BY display_order');
-  const results: UtilisationResult[] = [];
 
   if (granularity === 'monthly') {
+    // Run all 12 months × all teams in parallel
+    const promises: Promise<UtilisationResult>[] = [];
     for (let month = 1; month <= 12; month++) {
       for (const team of teams) {
-        results.push(await getMonthlyUtilisation(team.id, year, month));
+        promises.push(getMonthlyUtilisation(team.id, year, month));
       }
     }
+    return Promise.all(promises);
   } else if (granularity === 'quarterly') {
+    const promises: Promise<UtilisationResult>[] = [];
     for (let quarter = 1; quarter <= 4; quarter++) {
       for (const team of teams) {
-        results.push(await getQuarterlyUtilisation(team.id, year, quarter));
+        promises.push(getQuarterlyUtilisation(team.id, year, quarter));
       }
     }
+    return Promise.all(promises);
   } else {
-    for (const team of teams) {
-      results.push(await getAnnualUtilisation(team.id, year));
-    }
+    return Promise.all(teams.map((team) => getAnnualUtilisation(team.id, year)));
   }
-
-  return results;
 }
