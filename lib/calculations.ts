@@ -1,9 +1,8 @@
-import { dbAll, dbGet } from '@/lib/db';
+import { dbAll } from '@/lib/db';
 import type { UtilisationResult, Team } from '@/lib/types';
 import {
   getWorkingDays,
   getMonthRange,
-  getQuarterRange,
   getMonthName,
   isWorkingDay,
 } from '@/lib/utils';
@@ -12,77 +11,63 @@ const FULL_TIME_HOURS = 37.5;
 
 /**
  * Calculate daily utilisation for a team on a specific date.
- *
- * Uses FTE-weighted headcount so part-time staff (e.g. 18.75h = 0.5 FTE)
- * count proportionally rather than as a full headcount.
+ * Uses a single query to get staff + allocations together.
  */
 export async function getDailyUtilisation(
   teamId: number,
   date: string
 ): Promise<UtilisationResult> {
-  const team = await dbGet<Team>('SELECT id, name FROM teams WHERE id = ?', [teamId]);
-  const teamName = team?.name ?? 'Unknown';
+  const team = await dbAll<Team>('SELECT id, name FROM teams WHERE id = ?', [teamId]);
+  const teamName = team[0]?.name ?? 'Unknown';
 
-  const activeStaff = await dbAll<{ id: number; contracted_hours: number }>(
-    `SELECT id, contracted_hours FROM staff
-     WHERE team_id = ?
-       AND is_vacancy = 0
-       AND start_date <= ?
-       AND (end_date IS NULL OR end_date >= ?)`,
-    [teamId, date, date]
+  // Single query: get all active staff with their allocation for this date
+  const rows = await dbAll<{ id: number; contracted_hours: number; availability_weight: number | null }>(
+    `SELECT s.id, s.contracted_hours, da_st.availability_weight
+     FROM staff s
+     LEFT JOIN daily_allocations da ON da.staff_id = s.id AND da.date = ?
+     LEFT JOIN statuses da_st ON da_st.id = da.status_id
+     WHERE s.team_id = ?
+       AND s.is_vacancy = 0
+       AND s.start_date <= ?
+       AND (s.end_date IS NULL OR s.end_date >= ?)`,
+    [date, teamId, date, date]
   );
 
-  const headcount = activeStaff.reduce(
-    (sum, s) => sum + (s.contracted_hours ?? FULL_TIME_HOURS) / FULL_TIME_HOURS,
-    0
-  );
-
+  const headcount = rows.reduce((sum, s) => sum + (s.contracted_hours ?? FULL_TIME_HOURS) / FULL_TIME_HOURS, 0);
   if (headcount === 0) {
     return { team_id: teamId, team_name: teamName, period: date, value: 0, headcount: 0, available_count: 0 };
   }
 
   let totalWeight = 0;
   let availableCount = 0;
-
-  for (const s of activeStaff) {
+  for (const s of rows) {
     const fte = (s.contracted_hours ?? FULL_TIME_HOURS) / FULL_TIME_HOURS;
-    const allocation = await dbGet<{ availability_weight: number }>(
-      `SELECT s.availability_weight
-       FROM daily_allocations da
-       JOIN statuses s ON s.id = da.status_id
-       WHERE da.staff_id = ? AND da.date = ?`,
-      [s.id, date]
-    );
-
-    const weight = allocation ? allocation.availability_weight : 1.0;
+    const weight = s.availability_weight ?? 1.0; // null = no allocation = normal work
     totalWeight += weight * fte;
-    if (weight > 0) {
-      availableCount += weight * fte;
-    }
+    if (weight > 0) availableCount += weight * fte;
   }
-
-  const value = totalWeight / headcount;
 
   return {
     team_id: teamId,
     team_name: teamName,
     period: date,
-    value,
+    value: totalWeight / headcount,
     headcount: Math.round(headcount * 10) / 10,
     available_count: Math.round(availableCount * 10) / 10,
   };
 }
 
 /**
- * Calculate monthly utilisation for a team.
+ * Calculate monthly utilisation for a team using BULK queries.
+ * Fetches all data for the month in 2 queries instead of N*days.
  */
 export async function getMonthlyUtilisation(
   teamId: number,
   year: number,
   month: number
 ): Promise<UtilisationResult> {
-  const team = await dbGet<Team>('SELECT id, name FROM teams WHERE id = ?', [teamId]);
-  const teamName = team?.name ?? 'Unknown';
+  const team = await dbAll<Team>('SELECT id, name FROM teams WHERE id = ?', [teamId]);
+  const teamName = team[0]?.name ?? 'Unknown';
   const { from, to } = getMonthRange(year, month);
   const workingDays = getWorkingDays(from, to);
 
@@ -90,15 +75,64 @@ export async function getMonthlyUtilisation(
     return { team_id: teamId, team_name: teamName, period: getMonthName(month), value: 0, headcount: 0, available_count: 0 };
   }
 
+  // Query 1: Get all active staff for the entire month range
+  const staffRows = await dbAll<{ id: number; contracted_hours: number; start_date: string; end_date: string | null }>(
+    `SELECT id, contracted_hours, start_date, end_date FROM staff
+     WHERE team_id = ? AND is_vacancy = 0
+       AND start_date <= ?
+       AND (end_date IS NULL OR end_date >= ?)`,
+    [teamId, to, from]
+  );
+
+  if (staffRows.length === 0) {
+    return { team_id: teamId, team_name: teamName, period: getMonthName(month), value: 0, headcount: 0, available_count: 0 };
+  }
+
+  // Query 2: Get ALL allocations for these staff in this date range (single bulk query)
+  const staffIds = staffRows.map((s) => s.id);
+  const placeholders = staffIds.map(() => '?').join(',');
+  const allocations = await dbAll<{ staff_id: number; date: string; availability_weight: number }>(
+    `SELECT da.staff_id, da.date, st.availability_weight
+     FROM daily_allocations da
+     JOIN statuses st ON st.id = da.status_id
+     WHERE da.staff_id IN (${placeholders})
+       AND da.date >= ? AND da.date <= ?`,
+    [...staffIds, from, to]
+  );
+
+  // Index allocations by staff_id+date for O(1) lookup
+  const allocMap = new Map<string, number>();
+  for (const a of allocations) {
+    allocMap.set(`${a.staff_id}_${a.date}`, a.availability_weight);
+  }
+
   let totalValue = 0;
   let totalHeadcount = 0;
   let totalAvailable = 0;
 
   for (const day of workingDays) {
-    const daily = await getDailyUtilisation(teamId, day);
-    totalValue += daily.value;
-    totalHeadcount += daily.headcount;
-    totalAvailable += daily.available_count;
+    let dayHeadcount = 0;
+    let dayWeight = 0;
+    let dayAvailable = 0;
+
+    for (const s of staffRows) {
+      // Check if staff was active on this specific day
+      if (s.start_date > day) continue;
+      if (s.end_date && s.end_date < day) continue;
+
+      const fte = (s.contracted_hours ?? FULL_TIME_HOURS) / FULL_TIME_HOURS;
+      dayHeadcount += fte;
+
+      const weight = allocMap.get(`${s.id}_${day}`) ?? 1.0;
+      dayWeight += weight * fte;
+      if (weight > 0) dayAvailable += weight * fte;
+    }
+
+    if (dayHeadcount > 0) {
+      totalValue += dayWeight / dayHeadcount;
+      totalHeadcount += dayHeadcount;
+      totalAvailable += dayAvailable;
+    }
   }
 
   const avgValue = totalValue / workingDays.length;
@@ -123,8 +157,8 @@ export async function getQuarterlyUtilisation(
   year: number,
   quarter: number
 ): Promise<UtilisationResult> {
-  const team = await dbGet<Team>('SELECT id, name FROM teams WHERE id = ?', [teamId]);
-  const teamName = team?.name ?? 'Unknown';
+  const team = await dbAll<Team>('SELECT id, name FROM teams WHERE id = ?', [teamId]);
+  const teamName = team[0]?.name ?? 'Unknown';
   const startMonth = (quarter - 1) * 3 + 1;
 
   const monthlyResults: UtilisationResult[] = [];
@@ -133,7 +167,6 @@ export async function getQuarterlyUtilisation(
   }
 
   const validMonths = monthlyResults.filter((r) => r.headcount > 0);
-
   if (validMonths.length === 0) {
     return { team_id: teamId, team_name: teamName, period: `Q${quarter}`, value: 0, headcount: 0, available_count: 0 };
   }
@@ -143,12 +176,8 @@ export async function getQuarterlyUtilisation(
   const avgAvailable = Math.round(validMonths.reduce((sum, r) => sum + r.available_count, 0) / validMonths.length);
 
   return {
-    team_id: teamId,
-    team_name: teamName,
-    period: `Q${quarter}`,
-    value: Math.round(avgValue * 1000) / 1000,
-    headcount: avgHeadcount,
-    available_count: avgAvailable,
+    team_id: teamId, team_name: teamName, period: `Q${quarter}`,
+    value: Math.round(avgValue * 1000) / 1000, headcount: avgHeadcount, available_count: avgAvailable,
   };
 }
 
@@ -159,8 +188,8 @@ export async function getAnnualUtilisation(
   teamId: number,
   year: number
 ): Promise<UtilisationResult> {
-  const team = await dbGet<Team>('SELECT id, name FROM teams WHERE id = ?', [teamId]);
-  const teamName = team?.name ?? 'Unknown';
+  const team = await dbAll<Team>('SELECT id, name FROM teams WHERE id = ?', [teamId]);
+  const teamName = team[0]?.name ?? 'Unknown';
 
   const monthlyResults: UtilisationResult[] = [];
   for (let month = 1; month <= 12; month++) {
@@ -168,7 +197,6 @@ export async function getAnnualUtilisation(
   }
 
   const validMonths = monthlyResults.filter((r) => r.headcount > 0);
-
   if (validMonths.length === 0) {
     return { team_id: teamId, team_name: teamName, period: String(year), value: 0, headcount: 0, available_count: 0 };
   }
@@ -178,12 +206,8 @@ export async function getAnnualUtilisation(
   const avgAvailable = Math.round(validMonths.reduce((sum, r) => sum + r.available_count, 0) / validMonths.length);
 
   return {
-    team_id: teamId,
-    team_name: teamName,
-    period: String(year),
-    value: Math.round(avgValue * 1000) / 1000,
-    headcount: avgHeadcount,
-    available_count: avgAvailable,
+    team_id: teamId, team_name: teamName, period: String(year),
+    value: Math.round(avgValue * 1000) / 1000, headcount: avgHeadcount, available_count: avgAvailable,
   };
 }
 
