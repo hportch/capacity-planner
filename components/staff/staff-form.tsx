@@ -20,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import type { Team, Role, StaffWithDetails } from '@/lib/types';
 
 interface StaffFormProps {
@@ -38,6 +39,8 @@ export function StaffForm({ mode, staff }: StaffFormProps) {
   const [teamId, setTeamId] = useState<string>(staff?.team_id?.toString() ?? '');
   const [roleId, setRoleId] = useState<string>(staff?.role_id?.toString() ?? '');
   const [startDate, setStartDate] = useState(staff?.start_date ?? '');
+  const [endDate, setEndDate] = useState(staff?.end_date ?? '');
+  const [isActive, setIsActive] = useState(staff?.is_active !== 0);
   const [contractedHours, setContractedHours] = useState<string>(
     staff?.contracted_hours?.toString() ?? '37.5'
   );
@@ -52,6 +55,9 @@ export function StaffForm({ mode, staff }: StaffFormProps) {
       setRoles(rolesData);
     });
   }, []);
+
+  const selectedTeam = teams.find((t) => t.id.toString() === teamId);
+  const selectedRole = roles.find((r) => r.id.toString() === roleId);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -70,6 +76,8 @@ export function StaffForm({ mode, staff }: StaffFormProps) {
         team_id: Number(teamId),
         role_id: Number(roleId),
         start_date: startDate,
+        end_date: !isActive && endDate ? endDate : null,
+        is_active: isActive ? 1 : 0,
         contracted_hours: Number(contractedHours) || 37.5,
         notes: notes.trim() || null,
       };
@@ -131,7 +139,9 @@ export function StaffForm({ mode, staff }: StaffFormProps) {
               <Label>Team *</Label>
               <Select value={teamId} onValueChange={(val) => setTeamId(val ?? '')}>
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select team" />
+                  <SelectValue placeholder="Select team">
+                    {selectedTeam?.name ?? 'Select team'}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {teams.map((team) => (
@@ -147,7 +157,9 @@ export function StaffForm({ mode, staff }: StaffFormProps) {
               <Label>Role *</Label>
               <Select value={roleId} onValueChange={(val) => setRoleId(val ?? '')}>
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select role" />
+                  <SelectValue placeholder="Select role">
+                    {selectedRole?.name ?? 'Select role'}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {roles.map((role) => (
@@ -185,6 +197,41 @@ export function StaffForm({ mode, staff }: StaffFormProps) {
               />
             </div>
           </div>
+
+          {mode === 'edit' && (
+            <div className="rounded-lg border p-4 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label htmlFor="is_active" className="text-sm font-medium">Active</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Turn off to mark as left. They won&apos;t appear in allocations or future views.
+                  </p>
+                </div>
+                <Switch
+                  id="is_active"
+                  checked={isActive}
+                  onCheckedChange={(checked) => {
+                    setIsActive(checked);
+                    if (!checked && !endDate) {
+                      setEndDate(new Date().toISOString().split('T')[0]);
+                    }
+                  }}
+                />
+              </div>
+
+              {!isActive && (
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="end_date">Last Working Day</Label>
+                  <Input
+                    id="end_date"
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                  />
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="flex flex-col gap-2">
             <Label htmlFor="notes">Notes</Label>

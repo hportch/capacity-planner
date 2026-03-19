@@ -33,7 +33,6 @@ export function getDailyUtilisation(
     .prepare(
       `SELECT id FROM staff
        WHERE team_id = ?
-         AND is_active = 1
          AND start_date <= ?
          AND (end_date IS NULL OR end_date >= ?)`
     )

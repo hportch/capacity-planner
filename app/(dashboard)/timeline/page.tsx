@@ -50,9 +50,10 @@ export default async function TimelinePage({
     FROM staff s
     JOIN teams t ON t.id = s.team_id
     JOIN roles r ON r.id = s.role_id
-    WHERE s.is_active = 1
+    WHERE s.start_date <= ?
+      AND (s.end_date IS NULL OR s.end_date >= ?)
   `;
-  const staffParams: (string | number)[] = [];
+  const staffParams: (string | number)[] = [to, from];
 
   if (teamIdFilter !== null && !isNaN(teamIdFilter)) {
     staffQuery += ' AND s.team_id = ?';
