@@ -128,7 +128,8 @@ export function AllocationGrid({
   }, [statuses]);
 
   // Compute live utilisation per team from current cell values
-  // Only count working days in the range
+  // Uses FTE-weighted headcount so part-time staff count proportionally
+  const FULL_TIME_HOURS = 37.5;
   const teamUtilisation = useMemo(() => {
     const result = new Map<number, number>();
     const workingDates = allDates.filter(
@@ -137,18 +138,17 @@ export function AllocationGrid({
     if (workingDates.length === 0) return result;
 
     for (const group of staffGroups) {
-      const headcount = group.members.length;
-      if (headcount === 0) continue;
       let totalWeight = 0;
       let totalSlots = 0;
       for (const date of workingDates) {
         for (const member of group.members) {
+          const fte = (member.contracted_hours ?? FULL_TIME_HOURS) / FULL_TIME_HOURS;
           const key = cellKey(member.id, date);
           const statusId = cellValues.get(key);
           const weight =
             statusId != null ? (statusWeightMap.get(statusId) ?? 1.0) : 1.0;
-          totalWeight += weight;
-          totalSlots++;
+          totalWeight += weight * fte;
+          totalSlots += fte;
         }
       }
       result.set(

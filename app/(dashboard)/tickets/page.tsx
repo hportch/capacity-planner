@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { TicketBarChart } from '@/components/charts/ticket-bar-chart';
 import { TicketForm } from './ticket-form';
+import { HaloSyncButton } from './halo-sync-button';
 import { YearTabs } from './year-tabs';
 
 export default async function TicketsPage({
@@ -50,7 +51,11 @@ export default async function TicketsPage({
             Track tickets opened and closed against capacity baselines.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          <HaloSyncButton
+            year={selectedYear}
+            lastBaseline={metrics[metrics.length - 1]?.capacity_baseline ?? 2300}
+          />
           {ticketSystems.map((sys) => (
             <Badge key={sys} variant="secondary">
               {sys}

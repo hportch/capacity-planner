@@ -1,10 +1,12 @@
 import { getDb } from '@/lib/db'
+import { getDailyUtilisation } from '@/lib/calculations'
 import { getMonthlyUtilisation } from '@/lib/calculations'
 import { isWorkingDay } from '@/lib/utils'
-import type { Alert, CapacityThreshold, Team } from '@/lib/types'
+import type { Alert, CapacityThreshold, Team, Status } from '@/lib/types'
 
 import { AlertList } from '@/components/alerts/alert-list'
 import { ConflictDetector } from '@/components/alerts/conflict-detector'
+import { LoanSuggestions, type LoanSuggestion } from '@/components/alerts/loan-suggestions'
 
 interface ThresholdWithTeam extends CapacityThreshold {
   team_name: string
@@ -150,6 +152,100 @@ export default function AlertsPage() {
   // Sort conflicts by date
   conflicts.sort((a, b) => a.date.localeCompare(b.date))
 
+  // 3. Loan suggestions — for dates where a team is below threshold,
+  // find available staff from other teams who could be loaned
+  const loanSuggestions: LoanSuggestion[] = []
+
+  // Get the "Loaned" status ID
+  const loanedStatus = db
+    .prepare(`SELECT id FROM statuses WHERE category = 'loaned' LIMIT 1`)
+    .get() as { id: number } | undefined
+  const loanedStatusId = loanedStatus?.id ?? null
+
+  // Check next 2 weeks of working days for shortfalls
+  const twoWeeksFromNow = new Date(now)
+  twoWeeksFromNow.setDate(twoWeeksFromNow.getDate() + 14)
+
+  for (let d = new Date(now); d <= twoWeeksFromNow; d.setDate(d.getDate() + 1)) {
+    const dateStr = d.toISOString().split('T')[0]
+    if (!isWorkingDay(dateStr)) continue
+
+    for (const threshold of thresholds) {
+      const util = getDailyUtilisation(db, threshold.team_id, dateStr)
+      if (util.headcount === 0) continue
+      if (util.value >= threshold.min_utilisation) continue
+
+      // This team is below threshold on this date — find available staff from other teams
+      for (const otherTeam of teams) {
+        if (otherTeam.id === threshold.team_id) continue
+
+        const candidates = db
+          .prepare(
+            `SELECT s.id, s.name, s.role_id, r.name AS role_name
+             FROM staff s
+             JOIN roles r ON r.id = s.role_id
+             WHERE s.team_id = ?
+               AND s.is_active = 1
+               AND s.is_vacancy = 0
+               AND s.start_date <= ?
+               AND (s.end_date IS NULL OR s.end_date >= ?)`
+          )
+          .all(otherTeam.id, dateStr, dateStr) as { id: number; name: string; role_id: number; role_name: string }[]
+
+        for (const candidate of candidates) {
+          // Check if this person is available on this date (weight > 0)
+          const alloc = db
+            .prepare(
+              `SELECT st.availability_weight
+               FROM daily_allocations da
+               JOIN statuses st ON st.id = da.status_id
+               WHERE da.staff_id = ? AND da.date = ?`
+            )
+            .get(candidate.id, dateStr) as { availability_weight: number } | undefined
+
+          const weight = alloc ? alloc.availability_weight : 1.0
+          if (weight <= 0) continue // Already unavailable, can't loan
+
+          // Only suggest if their own team stays above threshold after loaning
+          const otherUtil = getDailyUtilisation(db, otherTeam.id, dateStr)
+          const otherThreshold = thresholds.find((t) => t.team_id === otherTeam.id)
+          if (otherThreshold && otherUtil.headcount > 0) {
+            // Simulate removing this person: reduce available by their weight
+            const fte = 1.0 // Simplified - just check if they can be spared
+            const newUtil = otherUtil.headcount > 0
+              ? (otherUtil.value * otherUtil.headcount - weight * fte) / (otherUtil.headcount)
+              : 0
+            if (newUtil < (otherThreshold.min_utilisation ?? 0)) continue // Would drop their team below threshold
+          }
+
+          loanSuggestions.push({
+            date: dateStr,
+            target_team_id: threshold.team_id,
+            target_team_name: threshold.team_name,
+            target_team_utilisation: util.value,
+            target_team_threshold: threshold.min_utilisation,
+            candidate_id: candidate.id,
+            candidate_name: candidate.name,
+            candidate_team_name: otherTeam.name,
+            candidate_role: candidate.role_name,
+          })
+        }
+      }
+    }
+  }
+
+  // Deduplicate: only show top 3 candidates per team per date
+  const dedupedSuggestions: LoanSuggestion[] = []
+  const seen = new Map<string, number>()
+  for (const s of loanSuggestions) {
+    const key = `${s.target_team_id}_${s.date}`
+    const count = seen.get(key) ?? 0
+    if (count < 3) {
+      dedupedSuggestions.push(s)
+      seen.set(key, count + 1)
+    }
+  }
+
   return (
     <div className="space-y-8">
       <div>
@@ -158,6 +254,15 @@ export default function AlertsPage() {
           {alerts.length} alert{alerts.length !== 1 ? 's' : ''} across {teams.length} teams
         </p>
         <AlertList alerts={alerts} />
+      </div>
+
+      <div>
+        <h2 className="text-sm font-medium text-muted-foreground mb-1">Loan Suggestions</h2>
+        <p className="text-xs text-muted-foreground mb-4">
+          When a team is below threshold, available staff from other teams are suggested as loan candidates.
+          Apply to mark them as &quot;Loaned&quot; for that date.
+        </p>
+        <LoanSuggestions suggestions={dedupedSuggestions} loanedStatusId={loanedStatusId} />
       </div>
 
       <div>

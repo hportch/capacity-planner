@@ -6,6 +6,7 @@ import type {
   Team,
   CapacityThreshold,
 } from '@/lib/types';
+import Link from 'next/link';
 import { AllocationGrid } from '@/components/allocations/allocation-grid';
 import { DateRangePicker } from '@/components/allocations/date-range-picker';
 import { TeamFilter } from '@/components/allocations/team-filter';
@@ -131,9 +132,17 @@ export default async function AllocationsPage({
     <div className="flex flex-col gap-4 p-6">
       {/* Page header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-2xl font-bold tracking-tight">
-          Staff Allocations
-        </h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold tracking-tight">
+            Staff Allocations
+          </h1>
+          <Link
+            href="/allocations/summary"
+            className="inline-flex h-7 items-center rounded-md border border-border bg-muted/50 px-2.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            Weekly Summary
+          </Link>
+        </div>
         <div className="flex items-center gap-3">
           <DateRangePicker from={from} to={to} mode={mode} />
           <TeamFilter teams={teams} currentTeamId={teamId} />

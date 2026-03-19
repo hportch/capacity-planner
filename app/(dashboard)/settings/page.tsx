@@ -20,6 +20,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Save, Loader2 } from 'lucide-react'
+import { CSVImport } from '@/components/import/csv-import'
 
 interface ThresholdRow {
   id: number
@@ -193,6 +194,7 @@ export default function SettingsPage() {
           <TabsTrigger value="thresholds">Thresholds</TabsTrigger>
           <TabsTrigger value="statuses">Statuses</TabsTrigger>
           <TabsTrigger value="teams">Teams</TabsTrigger>
+          <TabsTrigger value="import">Import</TabsTrigger>
         </TabsList>
 
         {/* Thresholds Tab */}
@@ -434,6 +436,10 @@ export default function SettingsPage() {
               </Table>
             </CardContent>
           </Card>
+        </TabsContent>
+        {/* Import Tab */}
+        <TabsContent value="import">
+          <CSVImport />
         </TabsContent>
       </Tabs>
     </div>

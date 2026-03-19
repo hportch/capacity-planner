@@ -8,10 +8,15 @@ import {
   isWorkingDay,
 } from '@/lib/utils';
 
+const FULL_TIME_HOURS = 37.5;
+
 /**
  * Calculate daily utilisation for a team on a specific date.
  *
- * daily_util = SUM(availability_weight for each active team member) / COUNT(active team members)
+ * Uses FTE-weighted headcount so part-time staff (e.g. 18.75h = 0.5 FTE)
+ * count proportionally rather than as a full headcount.
+ *
+ * daily_util = SUM(availability_weight * fte) / SUM(fte)
  *
  * If a team member has no allocation for a day, they count as available (weight 1.0)
  * — "Normal Work" is the default assumption.
@@ -31,15 +36,19 @@ export function getDailyUtilisation(
   // Find all active staff members for this team on this date (exclude vacancies)
   const activeStaff = db
     .prepare(
-      `SELECT id FROM staff
+      `SELECT id, contracted_hours FROM staff
        WHERE team_id = ?
          AND is_vacancy = 0
          AND start_date <= ?
          AND (end_date IS NULL OR end_date >= ?)`
     )
-    .all(teamId, date, date) as { id: number }[];
+    .all(teamId, date, date) as { id: number; contracted_hours: number }[];
 
-  const headcount = activeStaff.length;
+  // FTE-weighted headcount (e.g. 37.5h = 1.0, 18.75h = 0.5)
+  const headcount = activeStaff.reduce(
+    (sum, s) => sum + s.contracted_hours / FULL_TIME_HOURS,
+    0
+  );
 
   if (headcount === 0) {
     return {
@@ -64,17 +73,18 @@ export function getDailyUtilisation(
        AND da.date = ?`
   );
 
-  for (const staff of activeStaff) {
-    const allocation = allocationStmt.get(staff.id, date) as
+  for (const s of activeStaff) {
+    const fte = s.contracted_hours / FULL_TIME_HOURS;
+    const allocation = allocationStmt.get(s.id, date) as
       | { availability_weight: number }
       | undefined;
 
     // If no allocation exists, assume normal work (weight = 1.0)
     const weight = allocation ? allocation.availability_weight : 1.0;
-    totalWeight += weight;
+    totalWeight += weight * fte;
 
     if (weight > 0) {
-      availableCount += weight;
+      availableCount += weight * fte;
     }
   }
 
@@ -85,8 +95,8 @@ export function getDailyUtilisation(
     team_name: teamName,
     period: date,
     value,
-    headcount,
-    available_count: Math.round(availableCount),
+    headcount: Math.round(headcount * 10) / 10,
+    available_count: Math.round(availableCount * 10) / 10,
   };
 }
 
