@@ -9,6 +9,27 @@ import {
 
 const FULL_TIME_HOURS = 37.5;
 
+// Simple TTL cache for expensive utilisation computations
+const cache = new Map<string, { data: unknown; expires: number }>();
+const CACHE_TTL_MS = 60_000; // 60 seconds
+
+function getCached<T>(key: string): T | undefined {
+  const entry = cache.get(key);
+  if (entry && Date.now() < entry.expires) return entry.data as T;
+  cache.delete(key);
+  return undefined;
+}
+
+function setCache<T>(key: string, data: T): T {
+  cache.set(key, { data, expires: Date.now() + CACHE_TTL_MS });
+  return data;
+}
+
+/** Clear the utilisation cache (call after saving allocations) */
+export function invalidateUtilisationCache(): void {
+  cache.clear();
+}
+
 /**
  * Calculate daily utilisation for a team on a specific date.
  * Uses a single query to get staff + allocations together.
@@ -66,6 +87,10 @@ export async function getMonthlyUtilisation(
   year: number,
   month: number
 ): Promise<UtilisationResult> {
+  const cacheKey = `monthly:${teamId}:${year}:${month}`;
+  const cached = getCached<UtilisationResult>(cacheKey);
+  if (cached) return cached;
+
   const team = await dbAll<Team>('SELECT id, name FROM teams WHERE id = ?', [teamId]);
   const teamName = team[0]?.name ?? 'Unknown';
   const { from, to } = getMonthRange(year, month);
@@ -139,14 +164,14 @@ export async function getMonthlyUtilisation(
   const avgHeadcount = Math.round(totalHeadcount / workingDays.length);
   const avgAvailable = Math.round(totalAvailable / workingDays.length);
 
-  return {
+  return setCache(cacheKey, {
     team_id: teamId,
     team_name: teamName,
     period: getMonthName(month),
     value: Math.round(avgValue * 1000) / 1000,
     headcount: avgHeadcount,
     available_count: avgAvailable,
-  };
+  });
 }
 
 /**

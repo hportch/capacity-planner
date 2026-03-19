@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { dbBatch } from '@/lib/db';
+import { invalidateUtilisationCache } from '@/lib/calculations';
 
 export async function POST(request: NextRequest) {
   const body = await request.json();
@@ -28,6 +29,7 @@ export async function POST(request: NextRequest) {
   }
 
   await dbBatch(stmts);
+  invalidateUtilisationCache();
 
   return NextResponse.json({ success: true, count: stmts.length });
 }
