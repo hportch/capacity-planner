@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { getDb } from '@/lib/db';
+import { dbAll } from '@/lib/db';
 import type { StaffWithDetails, Team } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { StaffRoster } from './staff-roster';
@@ -18,11 +18,10 @@ export default async function StaffPage({
   const teamFilter = typeof params.team_id === 'string' ? params.team_id : '';
   const showArchived = params.show_archived === '1';
 
-  const db = getDb();
-
-  const teams = db
-    .prepare('SELECT id, name, display_order FROM teams ORDER BY display_order')
-    .all() as Team[];
+  const teams = await dbAll<Team>(
+    'SELECT id, name, display_order FROM teams ORDER BY display_order',
+    []
+  );
 
   let sql = `
     SELECT s.*, t.name as team_name, r.name as role_name
@@ -46,7 +45,7 @@ export default async function StaffPage({
   }
   sql += ' ORDER BY t.display_order, s.name';
 
-  const staff = db.prepare(sql).all(...sqlParams) as StaffWithDetails[];
+  const staff = await dbAll<StaffWithDetails>(sql, sqlParams);
 
   return (
     <div className="flex flex-1 flex-col gap-6 p-6">

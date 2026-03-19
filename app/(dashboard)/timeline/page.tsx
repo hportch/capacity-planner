@@ -1,4 +1,4 @@
-import { getDb } from '@/lib/db';
+import { dbAll } from '@/lib/db';
 import type {
   StaffWithDetails,
   DailyAllocationWithDetails,
@@ -32,12 +32,11 @@ export default async function TimelinePage({
   const teamIdFilter =
     typeof sp.team_id === 'string' ? parseInt(sp.team_id, 10) : null;
 
-  const db = getDb();
-
   // --- Fetch teams ---
-  const teams = db
-    .prepare('SELECT id, name, display_order FROM teams ORDER BY display_order')
-    .all() as Team[];
+  const teams = await dbAll<Team>(
+    'SELECT id, name, display_order FROM teams ORDER BY display_order',
+    []
+  );
 
   // --- Fetch active staff (with team & role names) ---
   let staffQuery = `
@@ -62,16 +61,13 @@ export default async function TimelinePage({
 
   staffQuery += ' ORDER BY t.display_order, s.name';
 
-  const staff = db
-    .prepare(staffQuery)
-    .all(...staffParams) as StaffWithDetails[];
+  const staff = await dbAll<StaffWithDetails>(staffQuery, staffParams);
 
   // --- Fetch statuses ---
-  const statuses = db
-    .prepare(
-      'SELECT id, name, category, availability_weight, color, display_order FROM statuses ORDER BY display_order',
-    )
-    .all() as Status[];
+  const statuses = await dbAll<Status>(
+    'SELECT id, name, category, availability_weight, color, display_order FROM statuses ORDER BY display_order',
+    []
+  );
 
   // --- Fetch allocations in date range ---
   let allocQuery = `
@@ -100,9 +96,7 @@ export default async function TimelinePage({
 
   allocQuery += ' ORDER BY da.date';
 
-  const allocations = db
-    .prepare(allocQuery)
-    .all(...allocParams) as DailyAllocationWithDetails[];
+  const allocations = await dbAll<DailyAllocationWithDetails>(allocQuery, allocParams);
 
   return (
     <div className="flex flex-col gap-4">

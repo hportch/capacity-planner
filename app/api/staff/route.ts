@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDb } from '@/lib/db';
+import { dbAll, dbGet, dbRun } from '@/lib/db';
 import type { StaffWithDetails } from '@/lib/types';
 
 export async function GET(request: NextRequest) {
-  const db = getDb();
   const { searchParams } = request.nextUrl;
   const teamId = searchParams.get('team_id');
   const active = searchParams.get('active');
@@ -32,12 +31,11 @@ export async function GET(request: NextRequest) {
 
   sql += ' ORDER BY t.display_order, s.name';
 
-  const staff = db.prepare(sql).all(...params) as StaffWithDetails[];
+  const staff = await dbAll<StaffWithDetails>(sql, params);
   return NextResponse.json(staff);
 }
 
 export async function POST(request: NextRequest) {
-  const db = getDb();
   const body = await request.json();
 
   const { name, team_id, role_id, start_date, contracted_hours, is_vacancy, notes } = body;
@@ -49,26 +47,28 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const result = db.prepare(`
-    INSERT INTO staff (name, team_id, role_id, start_date, contracted_hours, is_vacancy, notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    name,
-    Number(team_id),
-    Number(role_id),
-    start_date,
-    contracted_hours ?? 37.5,
-    is_vacancy ? 1 : 0,
-    notes ?? null
+  const result = await dbRun(
+    `INSERT INTO staff (name, team_id, role_id, start_date, contracted_hours, is_vacancy, notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      name,
+      Number(team_id),
+      Number(role_id),
+      start_date,
+      contracted_hours ?? 37.5,
+      is_vacancy ? 1 : 0,
+      notes ?? null,
+    ]
   );
 
-  const newStaff = db.prepare(`
-    SELECT s.*, t.name as team_name, r.name as role_name
+  const newStaff = await dbGet<StaffWithDetails>(
+    `SELECT s.*, t.name as team_name, r.name as role_name
     FROM staff s
     JOIN teams t ON s.team_id = t.id
     JOIN roles r ON s.role_id = r.id
-    WHERE s.id = ?
-  `).get(result.lastInsertRowid) as StaffWithDetails;
+    WHERE s.id = ?`,
+    [result.lastInsertRowid!]
+  );
 
   return NextResponse.json(newStaff, { status: 201 });
 }

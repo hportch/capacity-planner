@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDb } from '@/lib/db';
+import { dbRun } from '@/lib/db';
 import { getTicketCountsForMonth, getTicketCountsForRange } from '@/lib/halopsa';
 
 export async function POST(request: NextRequest) {
@@ -31,20 +31,18 @@ export async function POST(request: NextRequest) {
       results = await getTicketCountsForRange(Number(year), 1, Number(year), endMonth);
     }
 
-    const db = getDb();
-    const upsert = db.prepare(`
-      INSERT INTO ticket_metrics (year, month, capacity_baseline, tickets_opened, tickets_closed, ticket_system, notes)
+    const synced = [];
+    for (const r of results) {
+      await dbRun(
+        `INSERT INTO ticket_metrics (year, month, capacity_baseline, tickets_opened, tickets_closed, ticket_system, notes)
       VALUES (?, ?, ?, ?, ?, 'HaloPSA', 'Synced from HaloPSA API')
       ON CONFLICT(year, month) DO UPDATE SET
         tickets_opened = excluded.tickets_opened,
         tickets_closed = excluded.tickets_closed,
         ticket_system = excluded.ticket_system,
-        notes = excluded.notes
-    `);
-
-    const synced = [];
-    for (const r of results) {
-      upsert.run(r.year, r.month, baseline, r.tickets_opened, r.tickets_closed);
+        notes = excluded.notes`,
+        [r.year, r.month, baseline, r.tickets_opened, r.tickets_closed]
+      );
       synced.push(r);
     }
 

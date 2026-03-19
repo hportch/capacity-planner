@@ -1,4 +1,4 @@
-import { getDb } from '@/lib/db';
+import { dbAll } from '@/lib/db';
 import type {
   Status,
   StaffWithDetails,
@@ -44,20 +44,18 @@ export default async function AllocationsPage({
   const teamId =
     typeof params.team_id === 'string' ? params.team_id : null;
 
-  const db = getDb();
-
   // Fetch teams
-  const teams = db
-    .prepare('SELECT id, name, display_order FROM teams ORDER BY display_order')
-    .all() as Team[];
+  const teams = await dbAll<Team>(
+    'SELECT id, name, display_order FROM teams ORDER BY display_order',
+    []
+  );
 
   // Fetch statuses
-  const statuses = db
-    .prepare(
-      `SELECT id, name, category, availability_weight, color, display_order
-       FROM statuses ORDER BY display_order`
-    )
-    .all() as Status[];
+  const statuses = await dbAll<Status>(
+    `SELECT id, name, category, availability_weight, color, display_order
+     FROM statuses ORDER BY display_order`,
+    []
+  );
 
   // Fetch active staff (optionally filtered by team)
   let staffQuery = `
@@ -80,7 +78,7 @@ export default async function AllocationsPage({
 
   staffQuery += ' ORDER BY t.display_order, s.name';
 
-  const staff = db.prepare(staffQuery).all(...staffParams) as StaffWithDetails[];
+  const staff = await dbAll<StaffWithDetails>(staffQuery, staffParams);
 
   // Fetch allocations for the date range
   let allocQuery = `
@@ -109,19 +107,16 @@ export default async function AllocationsPage({
 
   allocQuery += ' ORDER BY t.display_order, s.name, da.date';
 
-  const allocations = db
-    .prepare(allocQuery)
-    .all(...allocParams) as DailyAllocationWithDetails[];
+  const allocations = await dbAll<DailyAllocationWithDetails>(allocQuery, allocParams);
 
   // Fetch thresholds for live utilisation indicators
   const today = new Date().toISOString().split('T')[0];
-  const thresholds = db
-    .prepare(
-      `SELECT ct.team_id, ct.min_utilisation
-       FROM capacity_thresholds ct
-       WHERE ct.effective_to IS NULL OR ct.effective_to >= ?`
-    )
-    .all(today) as Pick<CapacityThreshold, 'team_id' | 'min_utilisation'>[];
+  const thresholds = await dbAll<Pick<CapacityThreshold, 'team_id' | 'min_utilisation'>>(
+    `SELECT ct.team_id, ct.min_utilisation
+     FROM capacity_thresholds ct
+     WHERE ct.effective_to IS NULL OR ct.effective_to >= ?`,
+    [today]
+  );
 
   const thresholdMap: Record<number, number> = {};
   for (const t of thresholds) {

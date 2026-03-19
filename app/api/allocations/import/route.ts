@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDb } from '@/lib/db';
+import { dbAll, dbBatch } from '@/lib/db';
 
 /**
  * POST /api/allocations/import
@@ -27,65 +27,63 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const db = getDb();
-
     // Build lookup maps
-    const staffRows = db
-      .prepare('SELECT id, name FROM staff')
-      .all() as { id: number; name: string }[];
+    const staffRows = await dbAll<{ id: number; name: string }>(
+      'SELECT id, name FROM staff'
+    );
     const staffByName = new Map<string, number>();
     for (const s of staffRows) {
       staffByName.set(s.name.toLowerCase().trim(), s.id);
     }
 
-    const statusRows = db
-      .prepare('SELECT id, name FROM statuses')
-      .all() as { id: number; name: string }[];
+    const statusRows = await dbAll<{ id: number; name: string }>(
+      'SELECT id, name FROM statuses'
+    );
     const statusByName = new Map<string, number>();
     for (const s of statusRows) {
       statusByName.set(s.name.toLowerCase().trim(), s.id);
     }
 
-    const upsert = db.prepare(`
-      INSERT INTO daily_allocations (staff_id, date, status_id, notes)
+    let imported = 0;
+    const skipped: { row: number; reason: string }[] = [];
+    const stmts: { sql: string; args: (string | number | null)[] }[] = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+
+      // Validate date format
+      if (!row.date || !/^\d{4}-\d{2}-\d{2}$/.test(row.date)) {
+        skipped.push({ row: i + 1, reason: `Invalid date: "${row.date}"` });
+        continue;
+      }
+
+      const staffId = staffByName.get((row.staff_name || '').toLowerCase().trim());
+      if (!staffId) {
+        skipped.push({ row: i + 1, reason: `Unknown staff: "${row.staff_name}"` });
+        continue;
+      }
+
+      const statusId = statusByName.get((row.status_name || '').toLowerCase().trim());
+      if (!statusId) {
+        skipped.push({ row: i + 1, reason: `Unknown status: "${row.status_name}"` });
+        continue;
+      }
+
+      stmts.push({
+        sql: `INSERT INTO daily_allocations (staff_id, date, status_id, notes)
       VALUES (?, ?, ?, ?)
       ON CONFLICT(staff_id, date) DO UPDATE SET
         status_id = excluded.status_id,
         notes = excluded.notes,
-        updated_at = datetime('now')
-    `);
+        updated_at = datetime('now')`,
+        args: [staffId, row.date, statusId, row.notes || null],
+      });
+      imported++;
+    }
 
-    let imported = 0;
-    const skipped: { row: number; reason: string }[] = [];
-
-    const insertMany = db.transaction(() => {
-      for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
-
-        // Validate date format
-        if (!row.date || !/^\d{4}-\d{2}-\d{2}$/.test(row.date)) {
-          skipped.push({ row: i + 1, reason: `Invalid date: "${row.date}"` });
-          continue;
-        }
-
-        const staffId = staffByName.get((row.staff_name || '').toLowerCase().trim());
-        if (!staffId) {
-          skipped.push({ row: i + 1, reason: `Unknown staff: "${row.staff_name}"` });
-          continue;
-        }
-
-        const statusId = statusByName.get((row.status_name || '').toLowerCase().trim());
-        if (!statusId) {
-          skipped.push({ row: i + 1, reason: `Unknown status: "${row.status_name}"` });
-          continue;
-        }
-
-        upsert.run(staffId, row.date, statusId, row.notes || null);
-        imported++;
-      }
-    });
-
-    insertMany();
+    if (stmts.length > 0) {
+      await dbBatch(stmts);
+    }
 
     return NextResponse.json({
       imported,

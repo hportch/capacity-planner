@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { getDb } from '@/lib/db';
+import { dbGet } from '@/lib/db';
 import { StaffForm } from '@/components/staff/staff-form';
 import type { StaffWithDetails } from '@/lib/types';
 import Link from 'next/link';
@@ -16,15 +16,14 @@ export default async function EditStaffPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const db = getDb();
 
-  const staff = db.prepare(`
+  const staff = await dbGet<StaffWithDetails>(`
     SELECT s.*, t.name as team_name, r.name as role_name
     FROM staff s
     JOIN teams t ON s.team_id = t.id
     JOIN roles r ON s.role_id = r.id
     WHERE s.id = ?
-  `).get(Number(id)) as StaffWithDetails | undefined;
+  `, [Number(id)]);
 
   if (!staff) {
     notFound();

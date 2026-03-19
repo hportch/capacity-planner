@@ -1,10 +1,11 @@
-import type Database from 'better-sqlite3';
+import type { Client } from '@libsql/client';
 
-export function initSchema(db: Database.Database): void {
-  const version = db.pragma('user_version', { simple: true }) as number;
+export async function initSchema(client: Client): Promise<void> {
+  const versionResult = await client.execute('PRAGMA user_version');
+  const version = (versionResult.rows[0] as Record<string, number>)?.user_version ?? 0;
 
   if (version < 1) {
-    db.exec(`
+    await client.executeMultiple(`
       CREATE TABLE IF NOT EXISTS teams (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
         name          TEXT NOT NULL UNIQUE,
@@ -84,15 +85,15 @@ export function initSchema(db: Database.Database): void {
         created_at        TEXT NOT NULL DEFAULT (datetime('now')),
         UNIQUE(year, month)
       );
-    `);
 
-    db.pragma('user_version = 1');
+      PRAGMA user_version = 1;
+    `);
   }
 
   if (version < 2) {
-    // Add 'loaned' to the statuses category CHECK constraint
-    db.pragma('foreign_keys = OFF');
-    db.exec(`
+    await client.executeMultiple(`
+      PRAGMA foreign_keys = OFF;
+
       CREATE TABLE IF NOT EXISTS statuses_new (
         id                  INTEGER PRIMARY KEY AUTOINCREMENT,
         name                TEXT NOT NULL UNIQUE,
@@ -105,14 +106,16 @@ export function initSchema(db: Database.Database): void {
       INSERT OR IGNORE INTO statuses_new SELECT * FROM statuses;
       DROP TABLE statuses;
       ALTER TABLE statuses_new RENAME TO statuses;
+
+      PRAGMA foreign_keys = ON;
+      PRAGMA user_version = 2;
     `);
-    db.pragma('foreign_keys = ON');
-    db.pragma('user_version = 2');
   }
 
   if (version < 3) {
-    // Add is_vacancy column to staff for tracking unfilled positions
-    db.exec(`ALTER TABLE staff ADD COLUMN is_vacancy INTEGER NOT NULL DEFAULT 0`);
-    db.pragma('user_version = 3');
+    await client.executeMultiple(`
+      ALTER TABLE staff ADD COLUMN is_vacancy INTEGER NOT NULL DEFAULT 0;
+      PRAGMA user_version = 3;
+    `);
   }
 }

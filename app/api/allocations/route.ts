@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server';
-import { getDb } from '@/lib/db';
+import { dbAll, dbGet, dbRun } from '@/lib/db';
 import type { DailyAllocationWithDetails } from '@/lib/types';
 
 export async function GET(request: NextRequest) {
@@ -15,8 +15,6 @@ export async function GET(request: NextRequest) {
       { status: 400 }
     );
   }
-
-  const db = getDb();
 
   let query = `
     SELECT
@@ -55,7 +53,7 @@ export async function GET(request: NextRequest) {
 
   query += ' ORDER BY t.display_order, s.name, da.date';
 
-  const allocations = db.prepare(query).all(...params) as DailyAllocationWithDetails[];
+  const allocations = await dbAll<DailyAllocationWithDetails>(query, params);
   return NextResponse.json(allocations);
 }
 
@@ -70,43 +68,39 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const db = getDb();
+  const result = await dbRun(
+    `INSERT INTO daily_allocations (staff_id, date, status_id, notes)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(staff_id, date) DO UPDATE SET
+       status_id = excluded.status_id,
+       notes = excluded.notes,
+       updated_at = datetime('now')`,
+    [staff_id, date, status_id, notes || null]
+  );
 
-  const result = db
-    .prepare(
-      `INSERT INTO daily_allocations (staff_id, date, status_id, notes)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(staff_id, date) DO UPDATE SET
-         status_id = excluded.status_id,
-         notes = excluded.notes,
-         updated_at = datetime('now')`
-    )
-    .run(staff_id, date, status_id, notes || null);
-
-  const allocation = db
-    .prepare(
-      `SELECT
-        da.id,
-        da.staff_id,
-        da.date,
-        da.status_id,
-        da.notes,
-        da.created_at,
-        da.updated_at,
-        s.name AS staff_name,
-        s.team_id,
-        t.name AS team_name,
-        st.name AS status_name,
-        st.category AS status_category,
-        st.availability_weight,
-        st.color AS status_color
-      FROM daily_allocations da
-      JOIN staff s ON da.staff_id = s.id
-      JOIN teams t ON s.team_id = t.id
-      JOIN statuses st ON da.status_id = st.id
-      WHERE da.id = ?`
-    )
-    .get(result.lastInsertRowid) as DailyAllocationWithDetails;
+  const allocation = await dbGet<DailyAllocationWithDetails>(
+    `SELECT
+      da.id,
+      da.staff_id,
+      da.date,
+      da.status_id,
+      da.notes,
+      da.created_at,
+      da.updated_at,
+      s.name AS staff_name,
+      s.team_id,
+      t.name AS team_name,
+      st.name AS status_name,
+      st.category AS status_category,
+      st.availability_weight,
+      st.color AS status_color
+    FROM daily_allocations da
+    JOIN staff s ON da.staff_id = s.id
+    JOIN teams t ON s.team_id = t.id
+    JOIN statuses st ON da.status_id = st.id
+    WHERE da.id = ?`,
+    [result.lastInsertRowid!]
+  );
 
   return NextResponse.json(allocation, { status: 201 });
 }

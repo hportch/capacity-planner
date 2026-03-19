@@ -1,6 +1,5 @@
-import { getDb } from '@/lib/db';
-import type { Team, StaffWithDetails } from '@/lib/types';
-import { isWeekend, isBankHoliday, getMonthName } from '@/lib/utils';
+import { dbAll } from '@/lib/db';
+import type { Team } from '@/lib/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import Link from 'next/link';
@@ -60,34 +59,32 @@ export default async function AllocationSummaryPage({
   const weekOf = typeof params.week === 'string' ? params.week : undefined;
   const { from, to } = getWeekRange(weekOf);
 
-  const db = getDb();
-
-  const teams = db
-    .prepare('SELECT id, name, display_order FROM teams ORDER BY display_order')
-    .all() as Team[];
+  const teams = await dbAll<Team>(
+    'SELECT id, name, display_order FROM teams ORDER BY display_order',
+    []
+  );
 
   // Get all allocations for this week that are NOT normal work (have a status set)
-  const allocations = db
-    .prepare(
-      `SELECT
-         da.staff_id,
-         s.name AS staff_name,
-         s.team_id,
-         t.name AS team_name,
-         da.date,
-         st.name AS status_name,
-         st.category AS status_category,
-         st.color AS status_color,
-         da.notes
-       FROM daily_allocations da
-       JOIN staff s ON da.staff_id = s.id
-       JOIN teams t ON s.team_id = t.id
-       JOIN statuses st ON da.status_id = st.id
-       WHERE da.date >= ? AND da.date <= ?
-         AND s.is_active = 1
-       ORDER BY t.display_order, s.name, da.date`
-    )
-    .all(from, to) as AllocationRow[];
+  const allocations = await dbAll<AllocationRow>(
+    `SELECT
+       da.staff_id,
+       s.name AS staff_name,
+       s.team_id,
+       t.name AS team_name,
+       da.date,
+       st.name AS status_name,
+       st.category AS status_category,
+       st.color AS status_color,
+       da.notes
+     FROM daily_allocations da
+     JOIN staff s ON da.staff_id = s.id
+     JOIN teams t ON s.team_id = t.id
+     JOIN statuses st ON da.status_id = st.id
+     WHERE da.date >= ? AND da.date <= ?
+       AND s.is_active = 1
+     ORDER BY t.display_order, s.name, da.date`,
+    [from, to]
+  );
 
   // Group by team, then staff
   const teamGroups = new Map<number, { team: Team; staffMap: Map<number, { name: string; entries: AllocationRow[] }> }>();

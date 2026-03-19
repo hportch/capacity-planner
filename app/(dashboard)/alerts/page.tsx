@@ -1,8 +1,8 @@
-import { getDb } from '@/lib/db'
+import { dbAll, dbGet } from '@/lib/db'
 import { getDailyUtilisation } from '@/lib/calculations'
 import { getMonthlyUtilisation } from '@/lib/calculations'
 import { isWorkingDay } from '@/lib/utils'
-import type { Alert, CapacityThreshold, Team, Status } from '@/lib/types'
+import type { Alert, CapacityThreshold, Team } from '@/lib/types'
 
 import { AlertList } from '@/components/alerts/alert-list'
 import { ConflictDetector } from '@/components/alerts/conflict-detector'
@@ -20,8 +20,7 @@ interface ConflictEntry {
   total_staff: number
 }
 
-export default function AlertsPage() {
-  const db = getDb()
+export default async function AlertsPage() {
   const now = new Date()
   const currentYear = now.getFullYear()
   const currentMonth = now.getMonth() + 1
@@ -31,23 +30,23 @@ export default function AlertsPage() {
   const conflicts: ConflictEntry[] = []
 
   // Get teams and thresholds
-  const teams = db
-    .prepare('SELECT id, name, display_order FROM teams ORDER BY display_order')
-    .all() as Team[]
+  const teams = await dbAll<Team>(
+    'SELECT id, name, display_order FROM teams ORDER BY display_order',
+    []
+  )
 
-  const thresholds = db
-    .prepare(
-      `SELECT ct.*, t.name as team_name
-       FROM capacity_thresholds ct
-       JOIN teams t ON t.id = ct.team_id
-       WHERE ct.effective_to IS NULL OR ct.effective_to >= ?
-       ORDER BY t.display_order`
-    )
-    .all(today) as ThresholdWithTeam[]
+  const thresholds = await dbAll<ThresholdWithTeam>(
+    `SELECT ct.*, t.name as team_name
+     FROM capacity_thresholds ct
+     JOIN teams t ON t.id = ct.team_id
+     WHERE ct.effective_to IS NULL OR ct.effective_to >= ?
+     ORDER BY t.display_order`,
+    [today]
+  )
 
   // 1. Threshold violations
   for (const threshold of thresholds) {
-    const util = getMonthlyUtilisation(db, threshold.team_id, currentYear, currentMonth)
+    const util = await getMonthlyUtilisation(threshold.team_id, currentYear, currentMonth)
 
     if (util.headcount > 0 && util.value < threshold.min_utilisation) {
       const severity = util.value < threshold.min_utilisation * 0.8 ? 'critical' : 'warning'
@@ -80,33 +79,31 @@ export default function AlertsPage() {
   const endDate = sixWeeksFromNow.toISOString().split('T')[0]
 
   for (const team of teams) {
-    const activeStaff = db
-      .prepare(
-        `SELECT id, name FROM staff
-         WHERE team_id = ?
-           AND is_active = 1
-           AND start_date <= ?
-           AND (end_date IS NULL OR end_date >= ?)`
-      )
-      .all(team.id, endDate, today) as { id: number; name: string }[]
+    const activeStaff = await dbAll<{ id: number; name: string }>(
+      `SELECT id, name FROM staff
+       WHERE team_id = ?
+         AND is_active = 1
+         AND start_date <= ?
+         AND (end_date IS NULL OR end_date >= ?)`,
+      [team.id, endDate, today]
+    )
 
     if (activeStaff.length === 0) continue
 
     const staffIds = activeStaff.map((s) => s.id)
     const placeholders = staffIds.map(() => '?').join(',')
 
-    const unavailableAllocations = db
-      .prepare(
-        `SELECT da.staff_id, da.date, s.name as staff_name
-         FROM daily_allocations da
-         JOIN staff s ON s.id = da.staff_id
-         JOIN statuses st ON st.id = da.status_id
-         WHERE da.staff_id IN (${placeholders})
-           AND da.date >= ?
-           AND da.date <= ?
-           AND st.availability_weight = 0.0`
-      )
-      .all(...staffIds, today, endDate) as { staff_id: number; date: string; staff_name: string }[]
+    const unavailableAllocations = await dbAll<{ staff_id: number; date: string; staff_name: string }>(
+      `SELECT da.staff_id, da.date, s.name as staff_name
+       FROM daily_allocations da
+       JOIN staff s ON s.id = da.staff_id
+       JOIN statuses st ON st.id = da.status_id
+       WHERE da.staff_id IN (${placeholders})
+         AND da.date >= ?
+         AND da.date <= ?
+         AND st.availability_weight = 0.0`,
+      [...staffIds, today, endDate]
+    )
 
     // Group by date
     const byDate = new Map<string, string[]>()
@@ -157,9 +154,10 @@ export default function AlertsPage() {
   const loanSuggestions: LoanSuggestion[] = []
 
   // Get the "Loaned" status ID
-  const loanedStatus = db
-    .prepare(`SELECT id FROM statuses WHERE category = 'loaned' LIMIT 1`)
-    .get() as { id: number } | undefined
+  const loanedStatus = await dbGet<{ id: number }>(
+    `SELECT id FROM statuses WHERE category = 'loaned' LIMIT 1`,
+    []
+  )
   const loanedStatusId = loanedStatus?.id ?? null
 
   // Check next 2 weeks of working days for shortfalls
@@ -171,7 +169,7 @@ export default function AlertsPage() {
     if (!isWorkingDay(dateStr)) continue
 
     for (const threshold of thresholds) {
-      const util = getDailyUtilisation(db, threshold.team_id, dateStr)
+      const util = await getDailyUtilisation(threshold.team_id, dateStr)
       if (util.headcount === 0) continue
       if (util.value >= threshold.min_utilisation) continue
 
@@ -179,35 +177,33 @@ export default function AlertsPage() {
       for (const otherTeam of teams) {
         if (otherTeam.id === threshold.team_id) continue
 
-        const candidates = db
-          .prepare(
-            `SELECT s.id, s.name, s.role_id, r.name AS role_name
-             FROM staff s
-             JOIN roles r ON r.id = s.role_id
-             WHERE s.team_id = ?
-               AND s.is_active = 1
-               AND s.is_vacancy = 0
-               AND s.start_date <= ?
-               AND (s.end_date IS NULL OR s.end_date >= ?)`
-          )
-          .all(otherTeam.id, dateStr, dateStr) as { id: number; name: string; role_id: number; role_name: string }[]
+        const candidates = await dbAll<{ id: number; name: string; role_id: number; role_name: string }>(
+          `SELECT s.id, s.name, s.role_id, r.name AS role_name
+           FROM staff s
+           JOIN roles r ON r.id = s.role_id
+           WHERE s.team_id = ?
+             AND s.is_active = 1
+             AND s.is_vacancy = 0
+             AND s.start_date <= ?
+             AND (s.end_date IS NULL OR s.end_date >= ?)`,
+          [otherTeam.id, dateStr, dateStr]
+        )
 
         for (const candidate of candidates) {
           // Check if this person is available on this date (weight > 0)
-          const alloc = db
-            .prepare(
-              `SELECT st.availability_weight
-               FROM daily_allocations da
-               JOIN statuses st ON st.id = da.status_id
-               WHERE da.staff_id = ? AND da.date = ?`
-            )
-            .get(candidate.id, dateStr) as { availability_weight: number } | undefined
+          const alloc = await dbGet<{ availability_weight: number }>(
+            `SELECT st.availability_weight
+             FROM daily_allocations da
+             JOIN statuses st ON st.id = da.status_id
+             WHERE da.staff_id = ? AND da.date = ?`,
+            [candidate.id, dateStr]
+          )
 
           const weight = alloc ? alloc.availability_weight : 1.0
           if (weight <= 0) continue // Already unavailable, can't loan
 
           // Only suggest if their own team stays above threshold after loaning
-          const otherUtil = getDailyUtilisation(db, otherTeam.id, dateStr)
+          const otherUtil = await getDailyUtilisation(otherTeam.id, dateStr)
           const otherThreshold = thresholds.find((t) => t.team_id === otherTeam.id)
           if (otherThreshold && otherUtil.headcount > 0) {
             // Simulate removing this person: reduce available by their weight

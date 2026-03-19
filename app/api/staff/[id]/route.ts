@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDb } from '@/lib/db';
+import { dbGet, dbRun } from '@/lib/db';
 import type { StaffWithDetails } from '@/lib/types';
 
 export async function GET(
@@ -7,15 +7,15 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
 
-  const staff = db.prepare(`
-    SELECT s.*, t.name as team_name, r.name as role_name
+  const staff = await dbGet<StaffWithDetails>(
+    `SELECT s.*, t.name as team_name, r.name as role_name
     FROM staff s
     JOIN teams t ON s.team_id = t.id
     JOIN roles r ON s.role_id = r.id
-    WHERE s.id = ?
-  `).get(Number(id)) as StaffWithDetails | undefined;
+    WHERE s.id = ?`,
+    [Number(id)]
+  );
 
   if (!staff) {
     return NextResponse.json({ error: 'Staff member not found' }, { status: 404 });
@@ -29,10 +29,12 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
   const body = await request.json();
 
-  const existing = db.prepare('SELECT id FROM staff WHERE id = ?').get(Number(id));
+  const existing = await dbGet<{ id: number }>(
+    'SELECT id FROM staff WHERE id = ?',
+    [Number(id)]
+  );
   if (!existing) {
     return NextResponse.json({ error: 'Staff member not found' }, { status: 404 });
   }
@@ -55,15 +57,16 @@ export async function PUT(
   fields.push("updated_at = datetime('now')");
   values.push(Number(id));
 
-  db.prepare(`UPDATE staff SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+  await dbRun(`UPDATE staff SET ${fields.join(', ')} WHERE id = ?`, values);
 
-  const updated = db.prepare(`
-    SELECT s.*, t.name as team_name, r.name as role_name
+  const updated = await dbGet<StaffWithDetails>(
+    `SELECT s.*, t.name as team_name, r.name as role_name
     FROM staff s
     JOIN teams t ON s.team_id = t.id
     JOIN roles r ON s.role_id = r.id
-    WHERE s.id = ?
-  `).get(Number(id)) as StaffWithDetails;
+    WHERE s.id = ?`,
+    [Number(id)]
+  );
 
   return NextResponse.json(updated);
 }
@@ -73,17 +76,20 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
 
-  const existing = db.prepare('SELECT id FROM staff WHERE id = ?').get(Number(id));
+  const existing = await dbGet<{ id: number }>(
+    'SELECT id FROM staff WHERE id = ?',
+    [Number(id)]
+  );
   if (!existing) {
     return NextResponse.json({ error: 'Staff member not found' }, { status: 404 });
   }
 
   const today = new Date().toISOString().split('T')[0];
-  db.prepare(`
-    UPDATE staff SET end_date = ?, is_active = 0, updated_at = datetime('now') WHERE id = ?
-  `).run(today, Number(id));
+  await dbRun(
+    `UPDATE staff SET end_date = ?, is_active = 0, updated_at = datetime('now') WHERE id = ?`,
+    [today, Number(id)]
+  );
 
   return NextResponse.json({ success: true });
 }

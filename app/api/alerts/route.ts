@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { dbAll, dbGet } from '@/lib/db'
 import { getMonthlyUtilisation } from '@/lib/calculations'
 import { getWorkingDays, isWorkingDay } from '@/lib/utils'
 import type { Alert, CapacityThreshold, Team } from '@/lib/types'
@@ -9,7 +9,6 @@ interface ThresholdWithTeam extends CapacityThreshold {
 }
 
 export async function GET() {
-  const db = getDb()
   const today = new Date().toISOString().split('T')[0]
   const now = new Date()
   const currentYear = now.getFullYear()
@@ -18,24 +17,23 @@ export async function GET() {
   const alerts: Alert[] = []
 
   // Get current thresholds
-  const thresholds = db
-    .prepare(
-      `SELECT ct.*, t.name as team_name
-       FROM capacity_thresholds ct
-       JOIN teams t ON t.id = ct.team_id
-       WHERE ct.effective_to IS NULL OR ct.effective_to >= ?
-       ORDER BY t.display_order`
-    )
-    .all(today) as ThresholdWithTeam[]
+  const thresholds = await dbAll<ThresholdWithTeam>(
+    `SELECT ct.*, t.name as team_name
+     FROM capacity_thresholds ct
+     JOIN teams t ON t.id = ct.team_id
+     WHERE ct.effective_to IS NULL OR ct.effective_to >= ?
+     ORDER BY t.display_order`,
+    [today]
+  )
 
   // Get all teams
-  const teams = db
-    .prepare('SELECT id, name, display_order FROM teams ORDER BY display_order')
-    .all() as Team[]
+  const teams = await dbAll<Team>(
+    'SELECT id, name, display_order FROM teams ORDER BY display_order'
+  )
 
   // 1. Threshold violations — current month utilisation vs thresholds
   for (const threshold of thresholds) {
-    const util = getMonthlyUtilisation(db, threshold.team_id, currentYear, currentMonth)
+    const util = await getMonthlyUtilisation(threshold.team_id, currentYear, currentMonth)
 
     if (util.headcount > 0 && util.value < threshold.min_utilisation) {
       const severity = util.value < threshold.min_utilisation * 0.8 ? 'critical' : 'warning'
@@ -69,15 +67,14 @@ export async function GET() {
 
   for (const team of teams) {
     // Get active staff for this team
-    const activeStaff = db
-      .prepare(
-        `SELECT id, name FROM staff
-         WHERE team_id = ?
-           AND is_active = 1
-           AND start_date <= ?
-           AND (end_date IS NULL OR end_date >= ?)`
-      )
-      .all(team.id, endDate, today) as { id: number; name: string }[]
+    const activeStaff = await dbAll<{ id: number; name: string }>(
+      `SELECT id, name FROM staff
+       WHERE team_id = ?
+         AND is_active = 1
+         AND start_date <= ?
+         AND (end_date IS NULL OR end_date >= ?)`,
+      [team.id, endDate, today]
+    )
 
     if (activeStaff.length === 0) continue
 
@@ -85,18 +82,17 @@ export async function GET() {
     const staffIds = activeStaff.map((s) => s.id)
     const placeholders = staffIds.map(() => '?').join(',')
 
-    const unavailableAllocations = db
-      .prepare(
-        `SELECT da.staff_id, da.date, s.name as staff_name
-         FROM daily_allocations da
-         JOIN staff s ON s.id = da.staff_id
-         JOIN statuses st ON st.id = da.status_id
-         WHERE da.staff_id IN (${placeholders})
-           AND da.date >= ?
-           AND da.date <= ?
-           AND st.availability_weight = 0.0`
-      )
-      .all(...staffIds, today, endDate) as { staff_id: number; date: string; staff_name: string }[]
+    const unavailableAllocations = await dbAll<{ staff_id: number; date: string; staff_name: string }>(
+      `SELECT da.staff_id, da.date, s.name as staff_name
+       FROM daily_allocations da
+       JOIN staff s ON s.id = da.staff_id
+       JOIN statuses st ON st.id = da.status_id
+       WHERE da.staff_id IN (${placeholders})
+         AND da.date >= ?
+         AND da.date <= ?
+         AND st.availability_weight = 0.0`,
+      [...staffIds, today, endDate]
+    )
 
     // Group by date
     const byDate = new Map<string, string[]>()
@@ -147,15 +143,14 @@ export async function GET() {
       if (!threshold) continue
 
       // Get active staff
-      const activeStaff = db
-        .prepare(
-          `SELECT id FROM staff
-           WHERE team_id = ?
-             AND is_active = 1
-             AND start_date <= ?
-             AND (end_date IS NULL OR end_date >= ?)`
-        )
-        .all(team.id, weekEndStr, weekStartStr) as { id: number }[]
+      const activeStaff = await dbAll<{ id: number }>(
+        `SELECT id FROM staff
+         WHERE team_id = ?
+           AND is_active = 1
+           AND start_date <= ?
+           AND (end_date IS NULL OR end_date >= ?)`,
+        [team.id, weekEndStr, weekStartStr]
+      )
 
       if (activeStaff.length === 0) continue
 
@@ -163,17 +158,16 @@ export async function GET() {
       let totalWeight = 0
       let totalSlots = 0
 
-      const allocationStmt = db.prepare(
-        `SELECT s.availability_weight
-         FROM daily_allocations da
-         JOIN statuses s ON s.id = da.status_id
-         WHERE da.staff_id = ?
-           AND da.date = ?`
-      )
-
       for (const day of workingDays) {
         for (const staff of activeStaff) {
-          const alloc = allocationStmt.get(staff.id, day) as { availability_weight: number } | undefined
+          const alloc = await dbGet<{ availability_weight: number }>(
+            `SELECT s.availability_weight
+             FROM daily_allocations da
+             JOIN statuses s ON s.id = da.status_id
+             WHERE da.staff_id = ?
+               AND da.date = ?`,
+            [staff.id, day]
+          )
           totalWeight += alloc ? alloc.availability_weight : 1.0
           totalSlots++
         }

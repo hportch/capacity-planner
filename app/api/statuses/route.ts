@@ -1,21 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDb } from '@/lib/db';
+import { dbAll, dbGet, dbRun } from '@/lib/db';
 import type { Status } from '@/lib/types';
 
 export async function GET() {
-  const db = getDb();
-  const statuses = db
-    .prepare(
-      `SELECT id, name, category, availability_weight, color, display_order
-       FROM statuses
-       ORDER BY display_order`
-    )
-    .all() as Status[];
+  const statuses = await dbAll<Status>(
+    `SELECT id, name, category, availability_weight, color, display_order
+     FROM statuses
+     ORDER BY display_order`
+  );
   return NextResponse.json(statuses);
 }
 
 export async function PUT(request: NextRequest) {
-  const db = getDb();
   const body = await request.json();
   const { id, name, category, availability_weight, color } = body;
 
@@ -28,22 +24,24 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid category' }, { status: 400 });
   }
 
-  const existing = db
-    .prepare('SELECT id FROM statuses WHERE id = ?')
-    .get(id) as { id: number } | undefined;
+  const existing = await dbGet<{ id: number }>(
+    'SELECT id FROM statuses WHERE id = ?',
+    [id]
+  );
 
   if (!existing) {
     return NextResponse.json({ error: 'Status not found' }, { status: 404 });
   }
 
-  db.prepare(
+  await dbRun(
     `UPDATE statuses
      SET name = COALESCE(?, name),
          category = COALESCE(?, category),
          availability_weight = COALESCE(?, availability_weight),
          color = COALESCE(?, color)
-     WHERE id = ?`
-  ).run(name ?? null, category ?? null, availability_weight ?? null, color ?? null, id);
+     WHERE id = ?`,
+    [name ?? null, category ?? null, availability_weight ?? null, color ?? null, id]
+  );
 
   return NextResponse.json({ success: true });
 }

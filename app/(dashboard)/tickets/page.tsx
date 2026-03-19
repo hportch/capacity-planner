@@ -1,4 +1,4 @@
-import { getDb } from '@/lib/db';
+import { dbAll, dbGet } from '@/lib/db';
 import type { TicketMetric } from '@/lib/types';
 import { getMonthName } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,20 +14,21 @@ export default async function TicketsPage({
   searchParams: Promise<{ year?: string }>;
 }) {
   const sp = await searchParams;
-  const db = getDb();
 
   // Get available years
-  const yearRows = db
-    .prepare('SELECT DISTINCT year FROM ticket_metrics ORDER BY year')
-    .all() as { year: number }[];
+  const yearRows = await dbAll<{ year: number }>(
+    'SELECT DISTINCT year FROM ticket_metrics ORDER BY year',
+    []
+  );
   const availableYears = yearRows.map((r) => r.year);
 
   const selectedYear = sp.year ? Number(sp.year) : availableYears[availableYears.length - 1] ?? 2026;
 
   // Get ticket data for selected year
-  const metrics = db
-    .prepare('SELECT * FROM ticket_metrics WHERE year = ? ORDER BY month')
-    .all(selectedYear) as TicketMetric[];
+  const metrics = await dbAll<TicketMetric>(
+    'SELECT * FROM ticket_metrics WHERE year = ? ORDER BY month',
+    [selectedYear]
+  );
 
   // Calculate summary stats
   const totalOpened = metrics.reduce((sum, m) => sum + m.tickets_opened, 0);

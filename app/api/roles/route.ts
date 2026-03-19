@@ -1,9 +1,8 @@
 import { NextResponse } from 'next/server';
-import { getDb } from '@/lib/db';
+import { dbAll } from '@/lib/db';
 import type { Role } from '@/lib/types';
 
 export async function GET() {
-  const db = getDb();
-  const roles = db.prepare('SELECT id, name FROM roles ORDER BY name').all() as Role[];
+  const roles = await dbAll<Role>('SELECT id, name FROM roles ORDER BY name');
   return NextResponse.json(roles);
 }

@@ -1,5 +1,4 @@
 import { type NextRequest, NextResponse } from 'next/server';
-import { getDb } from '@/lib/db';
 import {
   getAllTeamsUtilisation,
   getMonthlyUtilisation,
@@ -39,8 +38,6 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const db = getDb();
-
   // If a specific team is requested
   if (teamIdParam) {
     const teamId = parseInt(teamIdParam, 10);
@@ -54,11 +51,11 @@ export async function GET(request: NextRequest) {
     const results = [];
     if (granularity === 'monthly') {
       for (let month = 1; month <= 12; month++) {
-        results.push(getMonthlyUtilisation(db, teamId, year, month));
+        results.push(await getMonthlyUtilisation(teamId, year, month));
       }
     } else {
       for (let quarter = 1; quarter <= 4; quarter++) {
-        results.push(getQuarterlyUtilisation(db, teamId, year, quarter));
+        results.push(await getQuarterlyUtilisation(teamId, year, quarter));
       }
     }
 
@@ -66,6 +63,6 @@ export async function GET(request: NextRequest) {
   }
 
   // All teams
-  const results = getAllTeamsUtilisation(db, year, granularity);
+  const results = await getAllTeamsUtilisation(year, granularity);
   return NextResponse.json(results);
 }

@@ -1,4 +1,3 @@
-import { getDb } from '@/lib/db';
 import { getAllTeamsUtilisation } from '@/lib/calculations';
 import { UTILISATION_THRESHOLDS } from '@/lib/constants';
 import { UtilisationLineChart } from '@/components/charts/utilisation-line-chart';
@@ -31,8 +30,7 @@ export default async function UtilisationPage({
         ? 'annual'
         : 'monthly';
 
-  const db = getDb();
-  const data = getAllTeamsUtilisation(db, year, granularity);
+  const data = await getAllTeamsUtilisation(year, granularity);
 
   // Build pivot structure: { teamName -> { period -> result } }
   const teamNames: string[] = [];

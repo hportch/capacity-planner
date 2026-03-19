@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server';
-import { getDb } from '@/lib/db';
+import { dbBatch } from '@/lib/db';
 
 export async function POST(request: NextRequest) {
   const body = await request.json();
@@ -12,30 +12,22 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const db = getDb();
+  const stmts: { sql: string; args: (string | number | null)[] }[] = [];
 
-  const upsert = db.prepare(
-    `INSERT INTO daily_allocations (staff_id, date, status_id, notes)
+  for (const item of allocations) {
+    if (!item.staff_id || !item.date || !item.status_id) continue;
+    stmts.push({
+      sql: `INSERT INTO daily_allocations (staff_id, date, status_id, notes)
      VALUES (?, ?, ?, ?)
      ON CONFLICT(staff_id, date) DO UPDATE SET
        status_id = excluded.status_id,
        notes = excluded.notes,
-       updated_at = datetime('now')`
-  );
+       updated_at = datetime('now')`,
+      args: [item.staff_id, item.date, item.status_id, item.notes || null],
+    });
+  }
 
-  const tx = db.transaction(
-    (items: { staff_id: number; date: string; status_id: number; notes?: string }[]) => {
-      let count = 0;
-      for (const item of items) {
-        if (!item.staff_id || !item.date || !item.status_id) continue;
-        upsert.run(item.staff_id, item.date, item.status_id, item.notes || null);
-        count++;
-      }
-      return count;
-    }
-  );
+  await dbBatch(stmts);
 
-  const count = tx(allocations);
-
-  return NextResponse.json({ success: true, count });
+  return NextResponse.json({ success: true, count: stmts.length });
 }

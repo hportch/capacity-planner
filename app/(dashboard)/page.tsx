@@ -1,9 +1,9 @@
-import { getDb } from '@/lib/db'
+import { dbAll, dbGet } from '@/lib/db'
 import {
   getMonthlyUtilisation,
   getAllTeamsUtilisation,
 } from '@/lib/calculations'
-import { getWorkingDays, isWorkingDay } from '@/lib/utils'
+import { isWorkingDay } from '@/lib/utils'
 import type { Alert, CapacityThreshold, Team, TicketMetric } from '@/lib/types'
 
 import { AlertBanner } from '@/components/dashboard/alert-banner'
@@ -16,20 +16,19 @@ interface ThresholdWithTeam extends CapacityThreshold {
   team_name: string
 }
 
-function computeAlerts(
-  db: ReturnType<typeof getDb>,
+async function computeAlerts(
   teams: Team[],
   thresholds: ThresholdWithTeam[],
   today: string,
   currentYear: number,
   currentMonth: number
-): Alert[] {
+): Promise<Alert[]> {
   const alerts: Alert[] = []
   const now = new Date()
 
   // 1. Threshold violations
   for (const threshold of thresholds) {
-    const util = getMonthlyUtilisation(db, threshold.team_id, currentYear, currentMonth)
+    const util = await getMonthlyUtilisation(threshold.team_id, currentYear, currentMonth)
 
     if (util.headcount > 0 && util.value < threshold.min_utilisation) {
       const severity = util.value < threshold.min_utilisation * 0.8 ? 'critical' : 'warning'
@@ -62,33 +61,31 @@ function computeAlerts(
   const endDate = sixWeeksFromNow.toISOString().split('T')[0]
 
   for (const team of teams) {
-    const activeStaff = db
-      .prepare(
-        `SELECT id, name FROM staff
-         WHERE team_id = ?
-           AND is_active = 1
-           AND start_date <= ?
-           AND (end_date IS NULL OR end_date >= ?)`
-      )
-      .all(team.id, endDate, today) as { id: number; name: string }[]
+    const activeStaff = await dbAll<{ id: number; name: string }>(
+      `SELECT id, name FROM staff
+       WHERE team_id = ?
+         AND is_active = 1
+         AND start_date <= ?
+         AND (end_date IS NULL OR end_date >= ?)`,
+      [team.id, endDate, today]
+    )
 
     if (activeStaff.length === 0) continue
 
     const staffIds = activeStaff.map((s) => s.id)
     const placeholders = staffIds.map(() => '?').join(',')
 
-    const unavailableAllocations = db
-      .prepare(
-        `SELECT da.staff_id, da.date, s.name as staff_name
-         FROM daily_allocations da
-         JOIN staff s ON s.id = da.staff_id
-         JOIN statuses st ON st.id = da.status_id
-         WHERE da.staff_id IN (${placeholders})
-           AND da.date >= ?
-           AND da.date <= ?
-           AND st.availability_weight = 0.0`
-      )
-      .all(...staffIds, today, endDate) as { staff_id: number; date: string; staff_name: string }[]
+    const unavailableAllocations = await dbAll<{ staff_id: number; date: string; staff_name: string }>(
+      `SELECT da.staff_id, da.date, s.name as staff_name
+       FROM daily_allocations da
+       JOIN staff s ON s.id = da.staff_id
+       JOIN statuses st ON st.id = da.status_id
+       WHERE da.staff_id IN (${placeholders})
+         AND da.date >= ?
+         AND da.date <= ?
+         AND st.availability_weight = 0.0`,
+      [...staffIds, today, endDate]
+    )
 
     const byDate = new Map<string, string[]>()
     for (const alloc of unavailableAllocations) {
@@ -121,8 +118,7 @@ function computeAlerts(
   return alerts
 }
 
-export default function DashboardPage() {
-  const db = getDb()
+export default async function DashboardPage() {
   const now = new Date()
   const currentYear = now.getFullYear()
   const currentMonth = now.getMonth() + 1
@@ -131,46 +127,47 @@ export default function DashboardPage() {
   const today = now.toISOString().split('T')[0]
 
   // Get teams
-  const teams = db
-    .prepare('SELECT id, name, display_order FROM teams ORDER BY display_order')
-    .all() as Team[]
+  const teams = await dbAll<Team>(
+    'SELECT id, name, display_order FROM teams ORDER BY display_order',
+    []
+  )
 
   // Get thresholds
-  const thresholds = db
-    .prepare(
-      `SELECT ct.*, t.name as team_name
-       FROM capacity_thresholds ct
-       JOIN teams t ON t.id = ct.team_id
-       WHERE ct.effective_to IS NULL OR ct.effective_to >= ?
-       ORDER BY t.display_order`
-    )
-    .all(today) as ThresholdWithTeam[]
+  const thresholds = await dbAll<ThresholdWithTeam>(
+    `SELECT ct.*, t.name as team_name
+     FROM capacity_thresholds ct
+     JOIN teams t ON t.id = ct.team_id
+     WHERE ct.effective_to IS NULL OR ct.effective_to >= ?
+     ORDER BY t.display_order`,
+    [today]
+  )
 
   // Compute utilisation per team for current and previous month
-  const teamCards = teams.map((team) => {
-    const current = getMonthlyUtilisation(db, team.id, currentYear, currentMonth)
-    const previous = getMonthlyUtilisation(db, team.id, previousMonthYear, previousMonth)
-    return {
-      teamName: team.name,
-      currentUtil: current.value,
-      previousUtil: previous.value,
-      headcount: current.headcount,
-      available: current.available_count,
-    }
-  })
+  const teamCards = await Promise.all(
+    teams.map(async (team) => {
+      const current = await getMonthlyUtilisation(team.id, currentYear, currentMonth)
+      const previous = await getMonthlyUtilisation(team.id, previousMonthYear, previousMonth)
+      return {
+        teamName: team.name,
+        currentUtil: current.value,
+        previousUtil: previous.value,
+        headcount: current.headcount,
+        available: current.available_count,
+      }
+    })
+  )
 
   // Get monthly heatmap data for full year
-  const monthlyData = getAllTeamsUtilisation(db, currentYear, 'monthly')
+  const monthlyData = await getAllTeamsUtilisation(currentYear, 'monthly')
 
   // Get quarterly data
-  const quarterlyData = getAllTeamsUtilisation(db, currentYear, 'quarterly')
+  const quarterlyData = await getAllTeamsUtilisation(currentYear, 'quarterly')
 
   // Get ticket metrics for current month
-  const ticketMetric = db
-    .prepare(
-      'SELECT * FROM ticket_metrics WHERE year = ? AND month = ?'
-    )
-    .get(currentYear, currentMonth) as TicketMetric | undefined
+  const ticketMetric = await dbGet<TicketMetric>(
+    'SELECT * FROM ticket_metrics WHERE year = ? AND month = ?',
+    [currentYear, currentMonth]
+  )
 
   const ticketOpened = ticketMetric?.tickets_opened ?? 0
   const ticketClosed = ticketMetric?.tickets_closed ?? 0
@@ -178,7 +175,7 @@ export default function DashboardPage() {
   const ticketBaseline = ticketMetric?.capacity_baseline ?? 0
 
   // Compute alerts
-  const alerts = computeAlerts(db, teams, thresholds, today, currentYear, currentMonth)
+  const alerts = await computeAlerts(teams, thresholds, today, currentYear, currentMonth)
 
   return (
     <div className="space-y-8">

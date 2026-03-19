@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDb } from '@/lib/db';
+import { dbAll, dbGet, dbRun } from '@/lib/db';
 import type { TicketMetric } from '@/lib/types';
 
 export async function GET(request: NextRequest) {
-  const db = getDb();
   const { searchParams } = request.nextUrl;
   const year = searchParams.get('year');
 
@@ -17,12 +16,11 @@ export async function GET(request: NextRequest) {
 
   sql += ' ORDER BY year, month';
 
-  const metrics = db.prepare(sql).all(...params) as TicketMetric[];
+  const metrics = await dbAll<TicketMetric>(sql, params);
   return NextResponse.json(metrics);
 }
 
 export async function POST(request: NextRequest) {
-  const db = getDb();
   const body = await request.json();
 
   const { year, month, capacity_baseline, tickets_opened, tickets_closed, ticket_system, notes } = body;
@@ -41,28 +39,30 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const result = db.prepare(`
-    INSERT INTO ticket_metrics (year, month, capacity_baseline, tickets_opened, tickets_closed, ticket_system, notes)
+  const result = await dbRun(
+    `INSERT INTO ticket_metrics (year, month, capacity_baseline, tickets_opened, tickets_closed, ticket_system, notes)
     VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(year, month) DO UPDATE SET
       capacity_baseline = excluded.capacity_baseline,
       tickets_opened = excluded.tickets_opened,
       tickets_closed = excluded.tickets_closed,
       ticket_system = excluded.ticket_system,
-      notes = excluded.notes
-  `).run(
-    Number(year),
-    Number(month),
-    Number(capacity_baseline),
-    Number(tickets_opened),
-    Number(tickets_closed),
-    ticket_system ?? null,
-    notes ?? null
+      notes = excluded.notes`,
+    [
+      Number(year),
+      Number(month),
+      Number(capacity_baseline),
+      Number(tickets_opened),
+      Number(tickets_closed),
+      ticket_system ?? null,
+      notes ?? null,
+    ]
   );
 
-  const metric = db.prepare(
-    'SELECT * FROM ticket_metrics WHERE id = ?'
-  ).get(result.lastInsertRowid) as TicketMetric;
+  const metric = await dbGet<TicketMetric>(
+    'SELECT * FROM ticket_metrics WHERE id = ?',
+    [result.lastInsertRowid!]
+  );
 
   return NextResponse.json(metric, { status: 201 });
 }
