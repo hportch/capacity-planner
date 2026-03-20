@@ -36,11 +36,11 @@ export async function POST(request: NextRequest) {
       await dbRun(
         `INSERT INTO ticket_metrics (year, month, capacity_baseline, tickets_opened, tickets_closed, ticket_system, notes)
       VALUES (?, ?, ?, ?, ?, 'HaloPSA', 'Synced from HaloPSA API')
-      ON CONFLICT(year, month) DO UPDATE SET
-        tickets_opened = excluded.tickets_opened,
-        tickets_closed = excluded.tickets_closed,
-        ticket_system = excluded.ticket_system,
-        notes = excluded.notes`,
+      ON DUPLICATE KEY UPDATE
+        tickets_opened = VALUES(tickets_opened),
+        tickets_closed = VALUES(tickets_closed),
+        ticket_system = VALUES(ticket_system),
+        notes = VALUES(notes)`,
         [r.year, r.month, baseline, r.tickets_opened, r.tickets_closed]
       );
       synced.push(r);

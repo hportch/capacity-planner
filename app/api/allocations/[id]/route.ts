@@ -31,7 +31,7 @@ export async function PUT(
 
   await dbRun(
     `UPDATE daily_allocations
-     SET status_id = ?, notes = ?, updated_at = datetime('now')
+     SET status_id = ?, notes = ?, updated_at = NOW()
      WHERE id = ?`,
     [status_id, notes ?? null, Number(id)]
   );

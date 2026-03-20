@@ -1,113 +1,135 @@
-import type { Client } from '@libsql/client';
+import type mysql from 'mysql2/promise';
 
-async function getSchemaVersion(client: Client): Promise<number> {
+async function getSchemaVersion(pool: mysql.Pool): Promise<number> {
   try {
-    const result = await client.execute('SELECT version FROM _schema_version LIMIT 1');
-    return (result.rows[0] as Record<string, number>)?.version ?? 0;
+    const [rows] = await pool.execute<mysql.RowDataPacket[]>('SELECT version FROM _schema_version LIMIT 1');
+    return (rows[0] as Record<string, number>)?.version ?? 0;
   } catch {
     // Table doesn't exist yet — version 0
     return 0;
   }
 }
 
-async function setSchemaVersion(client: Client, version: number): Promise<void> {
-  await client.execute(`
-    CREATE TABLE IF NOT EXISTS _schema_version (version INTEGER NOT NULL)
+async function setSchemaVersion(pool: mysql.Pool, version: number): Promise<void> {
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS _schema_version (version INT NOT NULL)
   `);
-  await client.execute('DELETE FROM _schema_version');
-  await client.execute({ sql: 'INSERT INTO _schema_version (version) VALUES (?)', args: [version] });
+  await pool.execute('DELETE FROM _schema_version');
+  await pool.execute('INSERT INTO _schema_version (version) VALUES (?)', [version]);
 }
 
-export async function initSchema(client: Client): Promise<void> {
-  const version = await getSchemaVersion(client);
+export async function initSchema(pool: mysql.Pool): Promise<void> {
+  const version = await getSchemaVersion(pool);
 
   if (version < 1) {
-    await client.execute(`
+    await pool.execute(`
       CREATE TABLE IF NOT EXISTS teams (
-        id            INTEGER PRIMARY KEY AUTOINCREMENT,
-        name          TEXT NOT NULL UNIQUE,
-        display_order INTEGER NOT NULL DEFAULT 0,
-        created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        id            INT NOT NULL AUTO_INCREMENT,
+        name          VARCHAR(255) NOT NULL,
+        display_order INT NOT NULL DEFAULT 0,
+        created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_teams_name (name)
       )
     `);
-    await client.execute(`
+
+    await pool.execute(`
       CREATE TABLE IF NOT EXISTS roles (
-        id         INTEGER PRIMARY KEY AUTOINCREMENT,
-        name       TEXT NOT NULL UNIQUE,
-        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        id         INT NOT NULL AUTO_INCREMENT,
+        name       VARCHAR(255) NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_roles_name (name)
       )
     `);
-    await client.execute(`
+
+    await pool.execute(`
       CREATE TABLE IF NOT EXISTS statuses (
-        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-        name                TEXT NOT NULL UNIQUE,
-        category            TEXT NOT NULL CHECK (category IN ('available', 'unavailable', 'partial', 'loaned')),
-        availability_weight REAL NOT NULL DEFAULT 1.0,
-        color               TEXT NOT NULL DEFAULT '#64748b',
-        display_order       INTEGER NOT NULL DEFAULT 0,
-        created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+        id                  INT NOT NULL AUTO_INCREMENT,
+        name                VARCHAR(255) NOT NULL,
+        category            ENUM('available', 'unavailable', 'partial', 'loaned') NOT NULL,
+        availability_weight DOUBLE NOT NULL DEFAULT 1.0,
+        color               VARCHAR(20) NOT NULL DEFAULT '#64748b',
+        display_order       INT NOT NULL DEFAULT 0,
+        created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_statuses_name (name)
       )
     `);
-    await client.execute(`
+
+    await pool.execute(`
       CREATE TABLE IF NOT EXISTS staff (
-        id               INTEGER PRIMARY KEY AUTOINCREMENT,
-        name             TEXT NOT NULL,
-        team_id          INTEGER NOT NULL REFERENCES teams(id),
-        role_id          INTEGER NOT NULL REFERENCES roles(id),
-        start_date       TEXT NOT NULL,
-        end_date         TEXT,
-        contracted_hours REAL NOT NULL DEFAULT 37.5,
-        is_active        INTEGER NOT NULL DEFAULT 1,
-        is_vacancy       INTEGER NOT NULL DEFAULT 0,
+        id               INT NOT NULL AUTO_INCREMENT,
+        name             VARCHAR(255) NOT NULL,
+        team_id          INT NOT NULL,
+        role_id          INT NOT NULL,
+        start_date       DATE NOT NULL,
+        end_date         DATE,
+        contracted_hours DOUBLE NOT NULL DEFAULT 37.5,
+        is_active        TINYINT(1) NOT NULL DEFAULT 1,
+        is_vacancy       TINYINT(1) NOT NULL DEFAULT 0,
         notes            TEXT,
-        created_at       TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+        created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_staff_team (team_id),
+        KEY idx_staff_active (is_active),
+        CONSTRAINT fk_staff_team FOREIGN KEY (team_id) REFERENCES teams(id),
+        CONSTRAINT fk_staff_role FOREIGN KEY (role_id) REFERENCES roles(id)
       )
     `);
-    await client.execute('CREATE INDEX IF NOT EXISTS idx_staff_team ON staff(team_id)');
-    await client.execute('CREATE INDEX IF NOT EXISTS idx_staff_active ON staff(is_active)');
-    await client.execute(`
+
+    await pool.execute(`
       CREATE TABLE IF NOT EXISTS daily_allocations (
-        id         INTEGER PRIMARY KEY AUTOINCREMENT,
-        staff_id   INTEGER NOT NULL REFERENCES staff(id),
-        date       TEXT NOT NULL,
-        status_id  INTEGER NOT NULL REFERENCES statuses(id),
+        id         INT NOT NULL AUTO_INCREMENT,
+        staff_id   INT NOT NULL,
+        date       DATE NOT NULL,
+        status_id  INT NOT NULL,
         notes      TEXT,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-        UNIQUE(staff_id, date)
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_alloc_staff_date (staff_id, date),
+        KEY idx_alloc_date (date),
+        CONSTRAINT fk_alloc_staff FOREIGN KEY (staff_id) REFERENCES staff(id),
+        CONSTRAINT fk_alloc_status FOREIGN KEY (status_id) REFERENCES statuses(id)
       )
     `);
-    await client.execute('CREATE INDEX IF NOT EXISTS idx_alloc_date ON daily_allocations(date)');
-    await client.execute('CREATE INDEX IF NOT EXISTS idx_alloc_staff_date ON daily_allocations(staff_id, date)');
-    await client.execute(`
+
+    await pool.execute(`
       CREATE TABLE IF NOT EXISTS capacity_thresholds (
-        id                INTEGER PRIMARY KEY AUTOINCREMENT,
-        team_id           INTEGER NOT NULL REFERENCES teams(id),
-        min_headcount     INTEGER,
-        min_utilisation   REAL NOT NULL DEFAULT 0.9,
-        ideal_utilisation REAL NOT NULL DEFAULT 1.0,
-        max_utilisation   REAL NOT NULL DEFAULT 1.1,
-        effective_from    TEXT NOT NULL,
-        effective_to      TEXT,
-        created_at        TEXT NOT NULL DEFAULT (datetime('now')),
-        UNIQUE(team_id, effective_from)
+        id                INT NOT NULL AUTO_INCREMENT,
+        team_id           INT NOT NULL,
+        min_headcount     INT,
+        min_utilisation   DOUBLE NOT NULL DEFAULT 0.9,
+        ideal_utilisation DOUBLE NOT NULL DEFAULT 1.0,
+        max_utilisation   DOUBLE NOT NULL DEFAULT 1.1,
+        effective_from    DATE NOT NULL,
+        effective_to      DATE,
+        created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_threshold_team_from (team_id, effective_from),
+        CONSTRAINT fk_threshold_team FOREIGN KEY (team_id) REFERENCES teams(id)
       )
     `);
-    await client.execute(`
+
+    await pool.execute(`
       CREATE TABLE IF NOT EXISTS ticket_metrics (
-        id                INTEGER PRIMARY KEY AUTOINCREMENT,
-        year              INTEGER NOT NULL,
-        month             INTEGER NOT NULL CHECK (month BETWEEN 1 AND 12),
-        capacity_baseline INTEGER NOT NULL,
-        tickets_opened    INTEGER NOT NULL DEFAULT 0,
-        tickets_closed    INTEGER NOT NULL DEFAULT 0,
-        ticket_system     TEXT,
+        id                INT NOT NULL AUTO_INCREMENT,
+        year              INT NOT NULL,
+        month             INT NOT NULL,
+        capacity_baseline INT NOT NULL,
+        tickets_opened    INT NOT NULL DEFAULT 0,
+        tickets_closed    INT NOT NULL DEFAULT 0,
+        ticket_system     VARCHAR(100),
         notes             TEXT,
-        created_at        TEXT NOT NULL DEFAULT (datetime('now')),
-        UNIQUE(year, month)
+        created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_ticket_year_month (year, month),
+        CHECK (month BETWEEN 1 AND 12)
       )
     `);
-    await setSchemaVersion(client, 3);
+
+    await setSchemaVersion(pool, 3);
   }
 }

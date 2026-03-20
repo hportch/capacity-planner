@@ -39,15 +39,15 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const result = await dbRun(
+  await dbRun(
     `INSERT INTO ticket_metrics (year, month, capacity_baseline, tickets_opened, tickets_closed, ticket_system, notes)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(year, month) DO UPDATE SET
-      capacity_baseline = excluded.capacity_baseline,
-      tickets_opened = excluded.tickets_opened,
-      tickets_closed = excluded.tickets_closed,
-      ticket_system = excluded.ticket_system,
-      notes = excluded.notes`,
+    ON DUPLICATE KEY UPDATE
+      capacity_baseline = VALUES(capacity_baseline),
+      tickets_opened = VALUES(tickets_opened),
+      tickets_closed = VALUES(tickets_closed),
+      ticket_system = VALUES(ticket_system),
+      notes = VALUES(notes)`,
     [
       Number(year),
       Number(month),
@@ -60,8 +60,8 @@ export async function POST(request: NextRequest) {
   );
 
   const metric = await dbGet<TicketMetric>(
-    'SELECT * FROM ticket_metrics WHERE id = ?',
-    [result.lastInsertRowid!]
+    'SELECT * FROM ticket_metrics WHERE year = ? AND month = ?',
+    [Number(year), Number(month)]
   );
 
   return NextResponse.json(metric, { status: 201 });

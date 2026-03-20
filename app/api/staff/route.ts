@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
     JOIN teams t ON s.team_id = t.id
     JOIN roles r ON s.role_id = r.id
     WHERE s.id = ?`,
-    [result.lastInsertRowid!]
+    [result.insertId]
   );
 
   return NextResponse.json(newStaff, { status: 201 });

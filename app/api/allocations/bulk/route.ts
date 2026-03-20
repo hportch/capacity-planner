@@ -20,10 +20,10 @@ export async function POST(request: NextRequest) {
     stmts.push({
       sql: `INSERT INTO daily_allocations (staff_id, date, status_id, notes)
      VALUES (?, ?, ?, ?)
-     ON CONFLICT(staff_id, date) DO UPDATE SET
-       status_id = excluded.status_id,
-       notes = excluded.notes,
-       updated_at = datetime('now')`,
+     ON DUPLICATE KEY UPDATE
+       status_id = VALUES(status_id),
+       notes = VALUES(notes),
+       updated_at = NOW()`,
       args: [item.staff_id, item.date, item.status_id, item.notes || null],
     });
   }

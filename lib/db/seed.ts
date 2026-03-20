@@ -1,9 +1,9 @@
-import type { Client } from '@libsql/client';
+import type mysql from 'mysql2/promise';
 import { STATUS_COLORS } from '../constants';
 
-export async function seedData(client: Client): Promise<void> {
-  const countResult = await client.execute('SELECT COUNT(*) as c FROM teams');
-  const count = (countResult.rows[0] as Record<string, number>)?.c ?? 0;
+export async function seedData(pool: mysql.Pool): Promise<void> {
+  const [rows] = await pool.execute<mysql.RowDataPacket[]>('SELECT COUNT(*) as c FROM teams');
+  const count = (rows[0] as Record<string, number>)?.c ?? 0;
   if (count > 0) return; // Already seeded
 
   // Batch all seed inserts in a transaction
@@ -48,16 +48,29 @@ export async function seedData(client: Client): Promise<void> {
     stmts.push({ sql: statusSql, args: [name, 'partial', 0.5, STATUS_COLORS[name] || '#f59e0b', order] });
   }
 
-  await client.batch(stmts, 'write');
+  // Run first batch (teams, roles, statuses) in a transaction
+  const conn = await pool.getConnection();
+  await conn.beginTransaction();
+  try {
+    for (const stmt of stmts) {
+      await conn.execute(stmt.sql, stmt.args);
+    }
+    await conn.commit();
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
 
   // Now look up IDs for staff inserts (need sequential execution after teams/roles are created)
   const getTeamId = async (name: string) => {
-    const r = await client.execute({ sql: 'SELECT id FROM teams WHERE name = ?', args: [name] });
-    return (r.rows[0] as Record<string, number>).id;
+    const [r] = await pool.execute<mysql.RowDataPacket[]>('SELECT id FROM teams WHERE name = ?', [name]);
+    return (r[0] as Record<string, number>).id;
   };
   const getRoleId = async (name: string) => {
-    const r = await client.execute({ sql: 'SELECT id FROM roles WHERE name = ?', args: [name] });
-    return (r.rows[0] as Record<string, number>).id;
+    const [r] = await pool.execute<mysql.RowDataPacket[]>('SELECT id FROM roles WHERE name = ?', [name]);
+    return (r[0] as Record<string, number>).id;
   };
 
   const sd = await getTeamId('Service Desk');
@@ -149,15 +162,27 @@ export async function seedData(client: Client): Promise<void> {
     staffStmts.push({ sql: ticketSql, args: [2026, month, 2300, opened, closed, 'HaloPSA', null] });
   }
 
-  await client.batch(staffStmts, 'write');
+  const conn2 = await pool.getConnection();
+  await conn2.beginTransaction();
+  try {
+    for (const stmt of staffStmts) {
+      await conn2.execute(stmt.sql, stmt.args);
+    }
+    await conn2.commit();
+  } catch (err) {
+    await conn2.rollback();
+    throw err;
+  } finally {
+    conn2.release();
+  }
 
   // Migration: add loaned status if missing
-  const loanedResult = await client.execute("SELECT COUNT(*) as c FROM statuses WHERE category = 'loaned'");
-  const loanedCount = (loanedResult.rows[0] as Record<string, number>)?.c ?? 0;
+  const [loanedRows] = await pool.execute<mysql.RowDataPacket[]>("SELECT COUNT(*) as c FROM statuses WHERE category = 'loaned'");
+  const loanedCount = (loanedRows[0] as Record<string, number>)?.c ?? 0;
   if (loanedCount === 0) {
-    await client.execute({
-      sql: 'INSERT INTO statuses (name, category, availability_weight, color, display_order) VALUES (?, ?, ?, ?, ?)',
-      args: ['Loaned', 'loaned', 0.0, '#f472b6', 60],
-    });
+    await pool.execute(
+      'INSERT INTO statuses (name, category, availability_weight, color, display_order) VALUES (?, ?, ?, ?, ?)',
+      ['Loaned', 'loaned', 0.0, '#f472b6', 60],
+    );
   }
 }

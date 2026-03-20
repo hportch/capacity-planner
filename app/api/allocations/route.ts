@@ -68,13 +68,13 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const result = await dbRun(
+  await dbRun(
     `INSERT INTO daily_allocations (staff_id, date, status_id, notes)
      VALUES (?, ?, ?, ?)
-     ON CONFLICT(staff_id, date) DO UPDATE SET
-       status_id = excluded.status_id,
-       notes = excluded.notes,
-       updated_at = datetime('now')`,
+     ON DUPLICATE KEY UPDATE
+       status_id = VALUES(status_id),
+       notes = VALUES(notes),
+       updated_at = NOW()`,
     [staff_id, date, status_id, notes || null]
   );
 
@@ -98,8 +98,8 @@ export async function POST(request: NextRequest) {
     JOIN staff s ON da.staff_id = s.id
     JOIN teams t ON s.team_id = t.id
     JOIN statuses st ON da.status_id = st.id
-    WHERE da.id = ?`,
-    [result.lastInsertRowid!]
+    WHERE da.staff_id = ? AND da.date = ?`,
+    [staff_id, date]
   );
 
   return NextResponse.json(allocation, { status: 201 });

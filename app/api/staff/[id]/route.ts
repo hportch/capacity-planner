@@ -54,7 +54,7 @@ export async function PUT(
     return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 });
   }
 
-  fields.push("updated_at = datetime('now')");
+  fields.push('updated_at = NOW()');
   values.push(Number(id));
 
   await dbRun(`UPDATE staff SET ${fields.join(', ')} WHERE id = ?`, values);
@@ -87,7 +87,7 @@ export async function DELETE(
 
   const today = new Date().toISOString().split('T')[0];
   await dbRun(
-    `UPDATE staff SET end_date = ?, is_active = 0, updated_at = datetime('now') WHERE id = ?`,
+    `UPDATE staff SET end_date = ?, is_active = 0, updated_at = NOW() WHERE id = ?`,
     [today, Number(id)]
   );
 

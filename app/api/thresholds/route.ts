@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
     ]
   )
 
-  return NextResponse.json({ id: result.lastInsertRowid }, { status: 201 })
+  return NextResponse.json({ id: result.insertId }, { status: 201 })
 }
 
 export async function PUT(request: NextRequest) {
